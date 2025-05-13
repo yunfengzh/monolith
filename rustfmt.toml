@@ -1,0 +1,11 @@
+hard_tabs = false
+tab_spaces = 4
+max_width = 120
+use_small_heuristics = "max"
+
+wrap_comments = true
+comment_width = 120
+
+# format_code_in_doc_comments = true
+# format_macro_matchers = true
+# format_macro_bodies = true

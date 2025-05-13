@@ -1,0 +1,30 @@
+workspace = { members = ["monolith_macro_utils"] }
+
+[package]
+name = "monolith"
+repository = "https://github.com/yunfengzh/monolith"
+license = "MIT OR Apache-2.0"
+description = "Monolith is a framework based on tokio and bevy."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+
+[dev-dependencies]
+bevy-inspector-egui = "*"
+serde_json = "*"
+num_enum = "*"
+tokio-stream = "*"
+
+[dependencies]
+monolith_macro_utils = { version = "*", path = "monolith_macro_utils/" }
+bevy = { version = "*", features = ["serialize", "bevy_mesh_picking_backend"]}
+tokio = { version = "*", features = ["full"] }
+tokio-util = { version = "*", features = ["full"] }
+tokio-condvar = "*"
+serde = { version = "*", features = ["derive"] }
+clap = { version = "*", features = ["derive", "cargo"]}
+mockall = "*"
+
+[[example]]
+name = "hello"
+path = "examples/hello.rs"
