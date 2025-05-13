@@ -12,7 +12,6 @@ use bevy::log::{Level, LogPlugin};
 use bevy::prelude::*;
 use bevy::tasks::block_on;
 use clap::{Parser, Subcommand, crate_name};
-use monolith::prelude::*;
 use monolith_macro_utils::*;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::{Deserialize, Serialize};
@@ -30,6 +29,7 @@ use tokio::{
     time::{Duration, sleep},
 };
 use tokio_util::sync::CancellationToken;
+use yunfengzh_monolith::prelude::*;
 // }])>
 
 // main() show:

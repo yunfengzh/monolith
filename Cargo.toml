@@ -1,29 +1,29 @@
 workspace = { members = ["monolith_macro_utils"] }
 
 [package]
-name = "monolith"
+name = "yunfengzh_monolith"
 repository = "https://github.com/yunfengzh/monolith"
 license = "MIT OR Apache-2.0"
 description = "Monolith is a framework based on tokio and bevy."
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.86"
+rust-version = "1.87"
 
 [dev-dependencies]
-bevy-inspector-egui = "*"
-serde_json = "*"
-num_enum = "*"
-tokio-stream = "*"
+bevy-inspector-egui = "0.31.0"
+serde_json = "1.0.140"
+num_enum = "0.7.3"
+tokio-stream = "0.1.17"
 
 [dependencies]
-monolith_macro_utils = { version = "*", path = "monolith_macro_utils/" }
-bevy = { version = "*", features = ["serialize", "bevy_mesh_picking_backend"]}
-tokio = { version = "*", features = ["full"] }
-tokio-util = { version = "*", features = ["full"] }
-tokio-condvar = "*"
-serde = { version = "*", features = ["derive"] }
-clap = { version = "*", features = ["derive", "cargo"]}
-mockall = "*"
+monolith_macro_utils = { version = "0.1", path = "monolith_macro_utils/" }
+bevy = { version = "0.16.0", features = ["serialize", "bevy_mesh_picking_backend"]}
+tokio = { version = "1.45.0", features = ["full"] }
+tokio-util = { version = "0.7.15", features = ["full"] }
+tokio-condvar = "0.3.0"
+serde = { version = "1.0.219", features = ["derive"] }
+clap = { version = "4.5.38", features = ["derive", "cargo"]}
+mockall = "0.13.1"
 
 [[example]]
 name = "hello"
