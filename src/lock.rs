@@ -32,8 +32,10 @@
 //! physical engine. In other words, athlete needs to take some time to prepare its data.
 //!
 //! The lock can be used in later contexts: Load, Save, Pause (launches by user normally),
-//! AlgoPause (you algoserver maybe need to pause game for copying data for later usage) etc.
+//! AlgoPause (you algoserver maybe need to pause game for copying data for later usage) etc
+//! [PauseReason].
 
+use bevy::prelude::*;
 use mockall::automock;
 use std::{
     collections::HashMap,
@@ -97,8 +99,8 @@ enum RefereeState {
 /// task.
 ///
 /// ## Safety
-/// All functions of Referee are protected by `Referee::state` and `Referee::shared_pause`. So it's
-/// safe to access the struct by [stump()](crate::stump::stump).
+/// All functions of Referee are protected by `Referee::state`. So it's safe to access the struct
+/// by [stump()](crate::stump::stump).
 ///
 /// ## [Referee::pause_and_wait_confirmation] Design
 /// The flow of `pause_and_wait_confirmation` is summarized below (3 stages)
@@ -144,22 +146,19 @@ enum RefereeState {
 /// }
 /// ```
 ///
-/// ## [PauseReason] and Shared-Pause Features
-/// `PauseReason` are divided into two categories, Load and the others.
+/// ### parameter `reason` of [Referee::pause_and_wait_confirmation]
+/// When reason is [PauseReason::Load] or [PauseReason::Save], it's developer's responsibility to
+/// prevent new athlete registers into Referee.
 ///
-/// - [PauseReason::Load] is treated as write request.
-/// - The remains are read requests.
+/// When reason is not [PauseReason::Pause], a raii is returned which calls [Referee::resume] when
+/// it's droped.
 ///
-/// Multi-read requests can be combined if their times are overlapped -- shared-pause feature.
-///
-/// And to [PauseReason::Load], referee internally forces all athletes to exit.
+/// See `examples/hello.rs` for all cases.
 pub struct Referee {
-    // the mutex protects not only all fields of the struct, but also cooperate with shared_pause
-    // field to fulfill shared-pause feature. Code lives in the mutex MUST be short and quick.
+    // the mutex protects all fields of the struct. Snippets in the mutex MUST be short and quick.
     state: Mutex<RefereeState>,
-    // shared_pause is used to immitate a rwlock, we can't use Rwlock directly because
-    // pause_and_wait_confirmation needs to release lock between stages.
-    shared_pause: (Condvar, i32),
+    // Be used by pause_and_wait_confirmation to queue multiple requests. cmd_queue.1 stores current PauseReason.
+    cmd_queue: (Condvar, PauseReason),
     // The field is used to cache new athlete registration when Referee is busy for pause process.
     new_athlete: Condvar,
 
@@ -176,7 +175,7 @@ impl Referee {
         let (s, r) = unbounded_channel::<ConfirmState>();
         Self {
             state: Mutex::new(RefereeState::None),
-            shared_pause: (Condvar::new(), 0),
+            cmd_queue: (Condvar::new(), PauseReason::None),
             new_athlete: Condvar::new(),
             counter: AtomicUsize::new(1),
             pool: HashMap::new(),
@@ -203,6 +202,10 @@ impl Referee {
                     return athlete;
                 }
                 _ => {
+                    let reason = self.cmd_queue.1;
+                    if matches!(reason, PauseReason::Load) || matches!(reason, PauseReason::Save) {
+                        error!("New athlete is appended into referee when {:?}", reason);
+                    }
                     lock = self.new_athlete.wait(lock).await;
                 }
             }
@@ -225,33 +228,14 @@ impl Referee {
 
     pub async fn pause_and_wait_confirmation(&mut self, reason: PauseReason) -> Option<RefereeGuard> {
         let mut lock = self.state.lock().await;
-        // do shared-pause <([{
-        match reason {
-            PauseReason::Load => {
-                while self.shared_pause.1 != 0 {
-                    lock = self.shared_pause.0.wait(lock).await;
-                }
-                self.shared_pause.1 = -1;
-            }
-            PauseReason::Pause | PauseReason::AlgoPause | PauseReason::Save => {
-                while self.shared_pause.1 == -1 {
-                    lock = self.shared_pause.0.wait(lock).await;
-                }
-                self.shared_pause.1 += 1;
-                if self.shared_pause.1 > 1 {
-                    drop(lock);
-                    return if matches!(reason, PauseReason::Pause) {
-                        None
-                    } else {
-                        Some(RefereeGuard { reason, phantom: PhantomData })
-                    };
-                }
-            }
-            _ => {
-                unreachable!();
+        loop {
+            if matches!(self.cmd_queue.1, PauseReason::None) {
+                self.cmd_queue.1 = reason;
+                break;
+            } else {
+                lock = self.cmd_queue.0.wait(lock).await;
             }
         }
-        // }])>
 
         // stage 1: wakeup all athletes by pause_chan <([{
         let _ = self.pause.send(reason);
@@ -293,16 +277,13 @@ impl Referee {
         assert_eq!(m, n + droped_cnt);
         // }])>
 
-        if matches!(reason, PauseReason::Pause) { None } else { Some(RefereeGuard { reason, phantom: PhantomData }) }
+        if matches!(reason, PauseReason::Pause) { None } else { Some(RefereeGuard { phantom: PhantomData }) }
     }
 
-    pub async fn resume(&mut self, reason: PauseReason) {
+    pub async fn resume(&mut self) {
         let mut lock = self.state.lock().await;
-        match reason {
+        match self.cmd_queue.1 {
             PauseReason::Load => {
-                assert!(self.shared_pause.1 == -1);
-                self.shared_pause.1 = 0;
-                self.shared_pause.0.notify_all();
                 // Later make sure all athletes exit.
                 loop {
                     if self.resume.is_closed() {
@@ -312,15 +293,14 @@ impl Referee {
                 }
             }
             PauseReason::Save | PauseReason::Pause | PauseReason::AlgoPause => {
-                assert!(self.shared_pause.1 > 0);
-                self.shared_pause.1 -= 1;
-                self.shared_pause.0.notify_all();
                 let _ = self.resume.send(());
             }
             _ => {
                 panic!("invalid parameter");
             }
         }
+        self.cmd_queue.1 = PauseReason::None;
+        self.cmd_queue.0.notify_all();
         *lock = RefereeState::None;
         self.new_athlete.notify_all();
     }
@@ -330,7 +310,6 @@ impl Referee {
     pub async fn async_debug_fmt(&self) {
         let lock = self.state.lock().await;
         println!("state: {:?}", (*lock));
-        println!("shared pause {:?}", self.shared_pause.1);
         println!("athletes:");
         self.pool.iter().for_each(|(k, v)| println!("  {:?}-{:?}", k, v.1));
     }
@@ -345,7 +324,6 @@ impl std::fmt::Debug for Referee {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let lock = self.state.blocking_lock();
         write!(f, "state: {:?}", (*lock))?;
-        write!(f, "shared pause {:?}", self.shared_pause.1)?;
         self.pool.iter().for_each(|(k, v)| {
             write!(f, "{:?}-{:?}", k, v.1).unwrap();
         });
@@ -355,14 +333,12 @@ impl std::fmt::Debug for Referee {
 
 /// RAII object returns by [Referee::pause_and_wait_confirmation]
 pub struct RefereeGuard<'a> {
-    reason: PauseReason,
-
     phantom: PhantomData<&'a Referee>,
 }
 
 impl<'a> RefereeGuard<'a> {
     pub async fn async_drop(&mut self) {
-        stump().referee.resume(self.reason).await;
+        stump().referee.resume().await;
     }
 }
 // }])>

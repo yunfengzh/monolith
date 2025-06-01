@@ -5,7 +5,7 @@ name = "yunfengzh_monolith"
 repository = "https://github.com/yunfengzh/monolith"
 license = "MIT OR Apache-2.0"
 description = "Monolith is a framework based on tokio and bevy."
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.87"
 

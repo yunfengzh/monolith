@@ -993,11 +993,10 @@ impl Board {
                 // do sth. here
             }
             GameEvent::Resume => {
-                referee.resume(PauseReason::Pause).await;
+                referee.resume().await;
             }
             GameEvent::Load { file_name } => {
-                // First of all, caller need make sure no new athlete registered to referee,
-                // algoserver is also suspended.
+                // First of all, caller need make sure no new athlete registered to referee.
                 let file_name = unsafe { usize2box::<String>(file_name) };
                 let mut raii = referee.pause_and_wait_confirmation(PauseReason::Load).await.take().unwrap();
                 raii.async_drop().await;
@@ -1033,6 +1032,7 @@ impl Board {
                 }
             }
             GameEvent::Save { file_name } => {
+                // First of all, caller need make sure no new athlete registered to referee.
                 let file_name = unsafe { usize2box::<String>(file_name) };
                 let mut buf = BufWriter::new(File::create(*file_name).await?);
 
