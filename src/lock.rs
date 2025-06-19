@@ -103,11 +103,12 @@ enum RefereeState {
 /// by [stump()](crate::stump::stump).
 ///
 /// ## [Referee::pause_and_wait_confirmation] Design
-/// The flow of `pause_and_wait_confirmation` is summarized below (3 stages)
+/// The flow of `pause_and_wait_confirmation` is summarized below (4 stages)
 ///
-/// 1. Send pause signal to all registered athletes, store the number of these athletes to `m`.
-/// 2. Wait confirm signals from these athletes until m = 0.
-/// 3. Tie up the loose ends, returns to its caller to do savegame.
+/// 1. Send pause signal to all registered athletes, store the number of these athletes to `i`.
+/// 2. Wait confirm signals from these athletes until i = 0.
+/// 3. relock Referee to check whether there're some new athletes, store it to `i`, go to step 2.
+/// 4. Tie up the loose ends, returns to its caller to do savegame.
 ///
 /// ### Chanllege about the flow:
 ///
@@ -118,37 +119,13 @@ enum RefereeState {
 ///
 /// ### Solution:
 ///
-/// 1. `Referee::new_athlete` is introduced to delay athlete registration until [Referee::resume]
-///    is called.
+/// 1. New athletes are checked in the loop of pause_and_wait_confirmation().
 /// 2. Send confirm signal in Athlete::Drop.
-/// 3. Lock is released at the end of stage 1 and regain at the begin of stage 3. Stage 2 is
-///    **NO-LOCK**.
-///
-/// ### Dead Lock:
-/// Solution may cause a dead lock. Consider you have two sprites, one is King, another is Servant.
-///
-/// - King successly registers into referee, but it needs Servant to continue.
-/// - Servant is on its way to referee registration.
-/// - Now `pause_and_wait_confirmation` is called, it finds there's an athlete -- King so it sends
-///   pause signal to King and wait King to response (stage 2).
-/// - However, King is waiting for Servant.
-/// - Servant is put into `Referee::new_athlete` and only is wakeup in `Referee::resume`.
-/// 3-level dead lock!!!
-///
-/// So in the case, you need to rewrite King code to
-///
-/// ```plaintext
-/// loop {
-/// 	tokio::select! {
-/// 		wait_servant_signal() => { break; }
-/// 		athlete.wait_pause() => { athlete.confirm_ready(); athlete.wait_resume().await; }
-/// 	}
-/// }
-/// ```
+/// 3. Lock is holded when necessary during stages.
 ///
 /// ### parameter `reason` of [Referee::pause_and_wait_confirmation]
 /// When reason is [PauseReason::Load] or [PauseReason::Save], it's developer's responsibility to
-/// prevent new athlete registers into Referee.
+/// prevent new athlete from registering into Referee.
 ///
 /// When reason is not [PauseReason::Pause], a raii is returned which calls [Referee::resume] when
 /// it's droped.
@@ -159,8 +136,8 @@ pub struct Referee {
     state: Mutex<RefereeState>,
     // Be used by pause_and_wait_confirmation to queue multiple requests. cmd_queue.1 stores current PauseReason.
     cmd_queue: (Condvar, PauseReason),
-    // The field is used to cache new athlete registration when Referee is busy for pause process.
-    new_athlete: Condvar,
+    // Be used to record new athletes during pause_and_wait_confirmation stage 2.
+    new_athlete_cnt: usize,
 
     counter: AtomicUsize,
     pool: HashMap<usize, (Box<dyn SaveSerialize>, String)>,
@@ -176,7 +153,7 @@ impl Referee {
         Self {
             state: Mutex::new(RefereeState::None),
             cmd_queue: (Condvar::new(), PauseReason::None),
-            new_athlete: Condvar::new(),
+            new_athlete_cnt: 0,
             counter: AtomicUsize::new(1),
             pool: HashMap::new(),
             pause: Sender::new(PauseReason::None),
@@ -187,29 +164,25 @@ impl Referee {
 
     // Safety, methods listed here is protected by lock. <([{
     pub async fn register(&mut self, su: Box<dyn SaveSerialize>, desc: String) -> Athlete {
-        let mut lock = self.state.lock().await;
-        loop {
-            match *lock {
-                RefereeState::None => {
-                    let id = self.counter.fetch_add(1, Ordering::SeqCst);
-                    let athlete = Athlete {
-                        id,
-                        pause: self.pause.subscribe(),
-                        confirm: self.confirm.0.clone(),
-                        resume: self.resume.subscribe(),
-                    };
-                    self.pool.insert(id, (su, desc));
-                    return athlete;
-                }
-                _ => {
-                    let reason = self.cmd_queue.1;
-                    if matches!(reason, PauseReason::Load) || matches!(reason, PauseReason::Save) {
-                        error!("New athlete is appended into referee when {:?}", reason);
-                    }
-                    lock = self.new_athlete.wait(lock).await;
-                }
+        let lock = self.state.lock().await;
+        let cur_pause_reason = match *lock {
+            RefereeState::None => None,
+            _ => {
+                self.new_athlete_cnt += 1;
+                Some(self.cmd_queue.1)
             }
-        }
+        };
+
+        let id = self.counter.fetch_add(1, Ordering::SeqCst);
+        let athlete = Athlete {
+            id,
+            cur_pause_reason,
+            pause: self.pause.subscribe(),
+            confirm: self.confirm.0.clone(),
+            resume: self.resume.subscribe(),
+        };
+        self.pool.insert(id, (su, desc));
+        return athlete;
     }
 
     async fn unregister(&mut self, athlete: &mut Athlete) {
@@ -240,41 +213,56 @@ impl Referee {
         // stage 1: wakeup all athletes by pause_chan <([{
         let _ = self.pause.send(reason);
         *lock = RefereeState::WaitPauseResponse;
-        let m = self.pool.len();
         // }])>
-        drop(lock);
 
-        // stage 2: collect confirmation from athletes, NOLOCK! RefereeState::WaitPauseResponse <([{
-        let mut i = m;
-        let mut droped_cnt = 0;
-        while i != 0 {
-            let state = self.confirm.1.recv().await.unwrap();
-            match reason {
-                // Force all athlets exit, ConfirmState::Drop only is sent by Athlete::async_drop().
-                PauseReason::Load => match state {
-                    ConfirmState::Drop => {}
-                    _ => {
-                        panic!("PauseReason::Load receives ConfirmState::Drop only.");
-                    }
-                },
-                _ => {}
-            }
-            match state {
-                ConfirmState::Drop => {
-                    droped_cnt += 1;
+        let cur_athletes = self.pool.len();
+        let mut droped_athletes = 0;
+        let mut new_athletes = 0;
+        let mut i = cur_athletes;
+        loop {
+            drop(lock);
+
+            // stage 2: collect confirmation from athletes, NOLOCK! RefereeState::WaitPauseResponse <([{
+            while i != 0 {
+                let state = self.confirm.1.recv().await.unwrap();
+                match reason {
+                    // Force all athlets exit, ConfirmState::Drop only is sent by Athlete::async_drop().
+                    PauseReason::Load => match state {
+                        ConfirmState::Drop => {}
+                        _ => {
+                            error!("PauseReason::Load receives ConfirmState::Drop only.");
+                        }
+                    },
+                    _ => {}
                 }
-                _ => {}
+                match state {
+                    ConfirmState::Drop => {
+                        droped_athletes += 1;
+                    }
+                    _ => {}
+                }
+                i = i - 1;
             }
-            i = i - 1;
-        }
-        // }])>
+            // }])>
 
-        let mut lock = self.state.lock().await;
-        // stage 3: regain lock, RefereeState::DoingJob, resume() will reset it to RefereeState::None <([{
+            // stage 3: relock to see whether there're new athletes during we release lock. <([{
+            lock = self.state.lock().await;
+            i = self.new_athlete_cnt;
+            self.new_athlete_cnt = 0;
+            if i == 0 {
+                // exit with lock
+                break;
+            }
+            new_athletes += i;
+            // }])>
+        }
+
+        // stage 4: locked, RefereeState::DoingJob, resume() will reset it to RefereeState::None <([{
         *lock = RefereeState::ResetbyResumeFn;
-        let n = self.pool.len();
-        // if m != n, some athletes has been dropped during stage 2.
-        assert_eq!(m, n + droped_cnt);
+        info!(
+            "PauseReason {:?}, new: {}, drop: {}, current {}",
+            self.cmd_queue.1, new_athletes, droped_athletes, cur_athletes
+        );
         // }])>
 
         if matches!(reason, PauseReason::Pause) { None } else { Some(RefereeGuard { phantom: PhantomData }) }
@@ -302,7 +290,6 @@ impl Referee {
         self.cmd_queue.1 = PauseReason::None;
         self.cmd_queue.0.notify_all();
         *lock = RefereeState::None;
-        self.new_athlete.notify_all();
     }
     // }])>
 
@@ -349,6 +336,8 @@ impl<'a> RefereeGuard<'a> {
 pub struct Athlete {
     id: usize,
 
+    cur_pause_reason: Option<PauseReason>,
+
     pause: Receiver<PauseReason>,
     confirm: UnboundedSender<ConfirmState>,
     resume: Receiver<()>,
@@ -356,6 +345,9 @@ pub struct Athlete {
 
 impl Athlete {
     pub async fn wait_pause(&mut self) -> PauseReason {
+        if self.cur_pause_reason.is_some() {
+            return self.cur_pause_reason.take().unwrap();
+        }
         self.pause.changed().await.unwrap();
         *self.pause.borrow_and_update()
     }
@@ -469,7 +461,7 @@ mod tests {
 
         // Athlete a, follows normal flow.
         let mut mock_a = MockSaveSerialize::new();
-        mock_a.expect_save().once().returning(|| vec![2]);
+        mock_a.expect_save().once().returning(|| vec![1]);
         let mut a = referee.register(Box::new(mock_a), "a".to_string()).await;
         assert!(matches!(*referee.state.get_mut(), RefereeState::None));
         assert_eq!(referee.pool.len(), 1);
@@ -503,8 +495,9 @@ mod tests {
             r3.await.unwrap();
             let referee = &mut stump().referee;
             let mut c = referee.register(Box::new(mock_c), "c".to_string()).await;
-            assert!(matches!(referee.state.get_mut(), RefereeState::None));
-            assert_eq!(referee.pool.len(), 1);
+            assert!(matches!(referee.state.get_mut(), RefereeState::WaitPauseResponse));
+            assert!(matches!(referee.new_athlete_cnt, 1));
+            assert_eq!(referee.pool.len(), 3);
             c.async_drop().await;
         });
 
@@ -514,7 +507,7 @@ mod tests {
             assert!(matches!((*referee_mut).state.get_mut(), RefereeState::ResetbyResumeFn));
             assert_eq!((*referee_mut).pool.len(), 1);
             for i in (*referee_mut).get_athlets() {
-                assert_eq!(i.save(), vec![2]);
+                assert_eq!(i.save(), vec![1]);
             }
         }
         raii.async_drop().await;
