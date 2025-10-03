@@ -44,6 +44,7 @@ async fn main() {
             level: Level::ERROR,
             filter: crate_name!().to_owned() + "=debug",
             custom_layer: |_| None,
+            fmt_layer: |_| None,
         }),
         MeshPickingPlugin,
     ));
@@ -268,7 +269,7 @@ fn create_button(parent: &mut RelatedSpawnerCommands<ChildOf>, title: &str) -> E
                     border: UiRect::all(Val::Px(5.0)),
                     ..default()
                 },
-                BorderColor(Color::BLACK),
+                BorderColor::all(Color::BLACK),
                 BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
             ),
             children![(
@@ -849,10 +850,10 @@ impl LoadSerialize for Sprite {
 // }])>
 
 // Bevy: More customizations on Sprite::entity <([{
-fn bevy_sprite_picked(click: Trigger<Pointer<Click>>) {
+fn bevy_sprite_picked(click: On<Pointer<Click>>) {
     let mg = mygame();
     let sprite = mg.sprite.as_ref().unwrap();
-    assert_eq!(click.target(), sprite.entity.unwrap());
+    assert_eq!(click.event().entity, sprite.entity.unwrap());
     mg.astar.tx.send((sprite.foreend.as_ref().unwrap().get_id(), (Vec3::ZERO, Vec3::new(1.2, 2.3, 3.4)))).unwrap();
 }
 

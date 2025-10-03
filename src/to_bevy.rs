@@ -135,7 +135,7 @@ fn do_task(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut query: Query<&mut Transform>,
-    mut app_exit_events: EventWriter<AppExit>,
+    mut app_exit_events: MessageWriter<AppExit>,
 ) {
     match task {
         TaskPayload::NewPointLight { ptr } => {

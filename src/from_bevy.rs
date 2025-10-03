@@ -221,7 +221,7 @@ fn std_backend_broadcast(key_combination: &String) {
     lock.retain_mut(|item| item.broadcast(&key_combination));
 }
 
-fn std_backend_callback(mut double_click: Local<(Option<Instant>, String)>, mut er: EventReader<KeyboardInput>) {
+fn std_backend_callback(mut double_click: Local<(Option<Instant>, String)>, mut er: MessageReader<KeyboardInput>) {
     for i in er.read() {
         if i.state == ButtonState::Released {
             info!("{:?}", i);

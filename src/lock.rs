@@ -95,8 +95,7 @@ enum RefereeState {
     ResetbyResumeFn,
 }
 
-/// Referee sends pause request to all Athletes then wait them to confirm ready then do further
-/// task.
+/// Referee sends pause request to all Athletes then wait them ready then do further task.
 ///
 /// ## Safety
 /// All functions of Referee are protected by `Referee::state`. So it's safe to access the struct
@@ -199,7 +198,7 @@ impl Referee {
         }
     }
 
-    pub async fn pause_and_wait_confirmation(&mut self, reason: PauseReason) -> Option<RefereeGuard> {
+    pub async fn pause_and_wait_confirmation(&mut self, reason: PauseReason) -> Option<RefereeGuard<'_>> {
         let mut lock = self.state.lock().await;
         loop {
             if matches!(self.cmd_queue.1, PauseReason::None) {
