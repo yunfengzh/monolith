@@ -3,6 +3,7 @@ default:
 	cargo run --example hello
 
 # $env:RUST_TEST_NOCAPTURE=1; cargo test --lib
+# cargo publish --workspace
 test:
 	cargo test --lib
 

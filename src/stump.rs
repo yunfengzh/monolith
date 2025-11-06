@@ -113,14 +113,14 @@ pub struct Stump {
 
     pub(crate) std_backend: Mutex<Vec<Box<StdBackend>>>,
     pub(crate) button_backend: Mutex<Vec<Box<ButtonBackend>>>,
-    pub(crate) developer_backend: DeveloperBackend,
-    pub(crate) record_backend: RecordBackend,
-    pub(crate) replay_backend: ReplayBackend,
+    pub developer_backend: DeveloperBackend,
+    pub record_backend: RecordBackend,
+    pub replay_backend: ReplayBackend,
     bevy_start_notification: Notify,
 
     pub(crate) task_chan: TaskChannel,
 
-    pub(crate) referee: Referee,
+    pub referee: Referee,
 }
 
 impl Stump {
@@ -152,18 +152,6 @@ impl Stump {
         Foreend::new(desc).await
     }
 
-    pub fn get_developer_backend(&self) -> &DeveloperBackend {
-        &self.developer_backend
-    }
-
-    pub fn get_record_backend(&mut self) -> &mut RecordBackend {
-        &mut self.record_backend
-    }
-
-    pub fn get_replay_backend(&mut self) -> &mut ReplayBackend {
-        &mut self.replay_backend
-    }
-
     pub(crate) fn bevy_start(&self) {
         self.bevy_start_notification.notify_one();
     }
@@ -182,8 +170,4 @@ impl Stump {
         self.task_chan.send(TaskPayload::BevyExit).unwrap();
     }
     // }])>
-
-    pub fn get_referee(&mut self) -> &mut Referee {
-        &mut self.referee
-    }
 }

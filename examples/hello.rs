@@ -112,14 +112,14 @@ fn my_developer_callback(l: &String) -> bool {
         }
         SubCommands::Record { id } => {
             block_on(async move {
-                let ret = stump().get_record_backend().toggle(id).await;
+                let ret = stump().record_backend.toggle(id).await;
                 println!("id record state is {ret}");
             });
             return true;
         }
         SubCommands::Dump { id, file } => {
             block_on(async move {
-                let v = stump().get_record_backend().dump(id).await;
+                let v = stump().record_backend.dump(id).await;
                 println!("Dump event for {id}: {:?}", v);
                 let v = to_vec(&v).unwrap();
                 fs::write(file, v).await.unwrap();
@@ -131,7 +131,7 @@ fn my_developer_callback(l: &String) -> bool {
                 let v = fs::read(file).await.unwrap();
                 let v = from_slice::<Tape>(&v).unwrap();
                 println!("Replay event for {id}: {:?}", v);
-                stump().get_replay_backend().play(v).await
+                stump().replay_backend.play(v).await
             });
             return true;
         }
@@ -419,8 +419,7 @@ impl Round1 {
 
         println!("round1 start");
         ui_set_label("Round1".to_string());
-        let mut athlete =
-            stump.get_referee().register(Box::new(unsafe { &*(&raw const *self) }), "round1".to_string()).await;
+        let mut athlete = stump.referee.register(Box::new(unsafe { &*(&raw const *self) }), "round1".to_string()).await;
         let mut interval = interval(Duration::from_secs(15));
         interval.tick().await;
 
@@ -509,8 +508,7 @@ impl Round2 {
         let stump = stump();
         let cancellation_token = stump.get_ct();
 
-        let mut athlete =
-            stump.get_referee().register(Box::new(unsafe { &*(&raw const *self) }), "round2".to_string()).await;
+        let mut athlete = stump.referee.register(Box::new(unsafe { &*(&raw const *self) }), "round2".to_string()).await;
         println!("round2 start");
         ui_set_label("Round2".to_string());
 
@@ -633,7 +631,7 @@ impl Sprite {
         // Safety: self is registered as SaveSerialize object into stump.referee, is removed in
         // athlete.async_drop() in later line, so self is always available during stump.referee.
         self.athlete =
-            Some(stump.get_referee().register(Box::new(unsafe { &*(&raw const *self) }), "sprite".to_string()).await);
+            Some(stump.referee.register(Box::new(unsafe { &*(&raw const *self) }), "sprite".to_string()).await);
 
         self.foreend = Some(stump.new_foreend("Sprite".to_string()).await);
 
@@ -894,7 +892,7 @@ struct AStarServer {
 impl AStarServer {
     fn new() -> Self {
         let (tx, rx) = unbounded_channel();
-        Self { tx, rx, redirect: stump().get_developer_backend().create_user_backend() }
+        Self { tx, rx, redirect: stump().developer_backend.create_user_backend() }
     }
 
     async fn run(&mut self) {
@@ -917,7 +915,7 @@ impl AStarServer {
     }
 
     async fn a_star_algo(_source: Vec3, _dest: Vec3) -> Vec<GameEvent> {
-        let referee = stump().get_referee();
+        let referee = &mut stump().referee;
         let mut raii = referee.pause_and_wait_confirmation(PauseReason::AlgoPause).await.take().unwrap();
         // Copy data from game for later algo such as get sprite.pos by Task::GetTransform.
         raii.async_drop().await;
@@ -987,7 +985,7 @@ impl Board {
         let stump = stump();
         let mg = mygame();
         println!("board event {:?}", ge);
-        let referee = stump.get_referee();
+        let referee = &mut stump.referee;
         match ge {
             GameEvent::Pause => {
                 referee.pause_and_wait_confirmation(PauseReason::Pause).await;
