@@ -8,7 +8,7 @@
 //! ## Safety
 //! All components from [stump()] are independent each other, goto their document for safety.
 //!
-//! ## Howto exit tokio
+//! ## How to exit tokio
 //! Goto [Graceful Shutdown tokio](https://tokio.rs/tokio/topics/shutdown) for more. I implements
 //! an inner struct tokio to cover the topic.
 //! - [Stump::spawn] to replace tokio::spawn to let your coroutine be the charge of stump().tokio.
@@ -16,11 +16,11 @@
 //! current coroutine, just like call `yield` in coroutine.
 //! - [Stump::exit_tokio] to exit all tokio coroutines gracefully.
 //!
-//! ## Howto exit bevy
+//! ## How to exit bevy
 //! - In tokio: call Stump::exit_bevy to exit bevy.
 //! - In bevy: send `AppExit::Success` to `EventWriter<AppExit>`.
 //!
-//! ## Howto get start notification from bevy.
+//! ## How to get start notification from bevy.
 //! await [Stump::bevy_started].
 
 use std::{future::Future, sync::OnceLock};

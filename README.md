@@ -30,3 +30,4 @@ async sprite::run() {
 - DeveloperBackend: permit developer inject GameEvent, observe inner variables etc.
 - RecordBackend/ReplayBackend: game recording feature.
 - Referee-Athlete: a brand-new lock for savefile. 
+- Rover: a programable embeded engineer for rogue-like/card games etc.

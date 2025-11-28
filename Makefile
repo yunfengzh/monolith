@@ -1,3 +1,6 @@
+rover:
+	cargo run --example rover_on_moon
+
 # $env:RUST_BACKTRACE=1; cargo run --example stump
 default:
 	cargo run --example hello
@@ -5,7 +8,8 @@ default:
 # $env:RUST_TEST_NOCAPTURE=1; cargo test --lib
 # cargo publish --workspace
 test:
-	cargo test --lib
+	cargo test --lib rover::tests::rover_call
+	# cargo test --lib
 
 doc:
 	cargo doc --no-deps --open

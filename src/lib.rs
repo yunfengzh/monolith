@@ -45,6 +45,7 @@
 
 pub mod from_bevy;
 pub mod lock;
+pub mod rover;
 pub mod stump;
 pub mod to_bevy;
 pub mod utils;
@@ -52,6 +53,7 @@ pub mod utils;
 pub mod prelude {
     pub use crate::from_bevy::*;
     pub use crate::lock::*;
+    pub use crate::rover::*;
     pub use crate::stump::*;
     pub use crate::to_bevy::*;
     pub use crate::utils::*;
