@@ -348,9 +348,9 @@ async fn setup_ui() -> Vec<Entity> {
 fn bevy_change_pause_button(
     In(ptr): In<usize>,
     mut text_query: Query<&mut Text>,
-    mypb: Query<&Children, With<MyPauseButton>>,
+    mypb: Single<&Children, With<MyPauseButton>>,
 ) -> Result<(), Box<dyn Error>> {
-    let mut text = text_query.get_mut(mypb.single()?[0]).unwrap();
+    let mut text = text_query.get_mut(mypb[0]).unwrap();
     // Safety: Task memory rule.
     let flag = unsafe { usize2box::<bool>(ptr) };
     if *flag {
@@ -376,10 +376,7 @@ fn ui_change_pause_button(flag: bool) {
 // }])>
 
 // ui_set_label <([{
-fn bevy_set_label(In(ptr): In<usize>, mut query: Query<&mut Text, With<Label>>) {
-    let Ok(mut text) = query.single_mut() else {
-        return;
-    };
+fn bevy_set_label(In(ptr): In<usize>, mut text: Single<&mut Text, With<Label>>) {
     // Safety: Task memory rule.
     let str = unsafe { usize2box::<String>(ptr) };
     text.0 = *str;
