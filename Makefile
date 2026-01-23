@@ -1,6 +1,7 @@
 # $env:RUST_BACKTRACE=1; cargo run --example stump
 default:
-	CARGO_TARGET_DIR=${HOME}/tmp cargo run --example hello
+	cargo run --example rhai_mod
+	# cargo run --example hello
 
 # cargo publish --workspace
 test:
