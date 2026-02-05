@@ -67,8 +67,27 @@ fn update_host() -> Result<(), Box<EvalAltResult>> {
 }
 // }])>
 
+// rhai type(by map) and method <([{
+fn oop() -> Result<(), Box<EvalAltResult>> {
+    let script = r#"
+        let obj = #{
+            name: "",
+            age: 0,
+            action: |x| { this.age += x; }
+        };
+        obj.action(3);
+        print(obj.age);
+    "#;
+    let engine = Engine::new();
+    engine.run(script)?;
+
+    Ok(())
+}
+// }])>
+
 fn main() -> Result<(), Box<dyn Error>> {
     update_host()?;
+    oop()?;
 
     Ok(())
 }
