@@ -3,6 +3,10 @@ default:
 	cargo run --example rhai_mod
 	# cargo run --example hello
 
+kimi:
+	cargo run --example kimi
+
+# $env:RUST_TEST_NOCAPTURE=1; cargo test --lib
 # cargo publish --workspace
 test:
 	CARGO_TARGET_DIR=${HOME}/tmp cargo test --lib -- --nocapture

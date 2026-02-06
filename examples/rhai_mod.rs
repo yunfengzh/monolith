@@ -6,7 +6,6 @@ use rhai::*;
 // }])>
 
 // Context: user mod updates host objects by certified API.
-// See more from rhai.src/examples/arrays_and_structs.rs
 // Player and PlayerHandle <([{
 fn update_host() -> Result<(), Box<EvalAltResult>> {
     // Host type and objects <([{
@@ -83,6 +82,9 @@ fn oop() -> Result<(), Box<EvalAltResult>> {
 
     Ok(())
 }
+// }])>
+
+// event callback in rhai <([{
 // }])>
 
 fn main() -> Result<(), Box<dyn Error>> {
