@@ -1,4 +1,9 @@
+// vim: foldmarker=<([{,}])> foldmethod=marker
+
+// <([{
 use rhai::{CustomType, Dynamic, Engine, Scope, TypeBuilder};
+use std::collections::HashSet;
+// }])>
 
 #[derive(Debug, Clone, CustomType)]
 struct GameState {
@@ -59,6 +64,9 @@ impl GameEngine {
         "#;
 
         let ast = engine.compile(script)?;
+        for func in ast.iter_functions() {
+            println!("--{}, {:?}", func.name, func.params);
+        }
         let mut scope = Scope::new();
 
         engine.run_with_scope(&mut scope, r#"let game = my_new("player1");"#)?;

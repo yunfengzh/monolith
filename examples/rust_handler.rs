@@ -1,8 +1,7 @@
-use std::error::Error;
-
 // vim: foldmarker=<([{,}])> foldmethod=marker
 // <([{
 use rhai::*;
+use std::error::Error;
 // }])>
 
 // Context: user mod updates host objects by certified API.
@@ -55,6 +54,8 @@ fn update_host() -> Result<(), Box<EvalAltResult>> {
             fn fight() {
                 a.update(-15);
                 b.update(-3);
+                print(a);
+                // a = a + 3; // <-- failed.
                 1
             }
         "#,
