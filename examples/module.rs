@@ -112,6 +112,7 @@ fn rhai_to_rust(rhai: &mut Rhai) -> Result<bool, Box<EvalAltResult>> {
 
     let handle_a: PlayerHandle = (&mut a).into();
     // }])>
+    // Rhai only supports method in global namespace!!!!
     let mut module = Module::new();
     module.set_var("a", handle_a);
     FuncRegistration::new("adjust")
