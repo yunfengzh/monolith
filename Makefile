@@ -1,11 +1,11 @@
 # $env:RUST_BACKTRACE=1; cargo run --example stump
 default:
-	cargo run --example hello
+	CARGO_TARGET_DIR=${HOME}/tmp cargo run --example hello
 
 # $env:RUST_TEST_NOCAPTURE=1; cargo test --lib
 # cargo publish --workspace
 test:
-	cargo test --lib
+	CARGO_TARGET_DIR=${HOME}/tmp cargo test --lib -- --nocapture
 
 doc:
 	cargo doc --no-deps --open

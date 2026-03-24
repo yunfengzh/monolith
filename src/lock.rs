@@ -91,41 +91,63 @@ pub enum ConfirmState {
 #[derive(Debug)]
 enum RefereeState {
     None,
-    WaitPauseResponse,
-    ResetbyResumeFn,
+    PauseStage,
+    SavegameStage,
 }
 
-/// Referee sends pause request to all Athletes then wait them ready then do further task.
+/// Referee sends pause request to all Athletes then wait them ready then do further task (such as
+/// savegame).
 ///
 /// ## Safety
 /// All functions of Referee are protected by `Referee::state`. So it's safe to access the struct
 /// by [stump()](crate::stump::stump).
 ///
-/// ## [Referee::pause_and_wait_confirmation] Design
-/// The flow of `pause_and_wait_confirmation` is summarized below (4 stages)
+/// ## Pause stage and savegame stage.
+/// Referee core:
+/// 1. Pause stage: [Referee::pause_and_wait_confirmation].
+/// 2. savegame stage: between [Referee::pause_and_wait_confirmation] and [Referee::resume]
 ///
+/// ## [Referee::pause_and_wait_confirmation] Design
+/// The flow of `pause_and_wait_confirmation` is summarized below (4 steps)
 /// 1. Send pause signal to all registered athletes, store the number of these athletes to `i`.
 /// 2. Wait confirm signals from these athletes until i = 0.
 /// 3. relock Referee to check whether there're some new athletes, store it to `i`, go to step 2.
-/// 4. Tie up the loose ends, returns to its caller to do savegame.
+/// 4. Finally, returns to its caller to do savegame.
 ///
-/// ### Chanllege about the flow:
+/// ## Chanllege about the flow:
+/// 1. New athlete maybe tries to register into referee in stage 1 and stage 2.
+/// 2. An active athlete may exit before send confirm to referee in step 2.
+/// 3. `Referee::state` is designed as guard critical area, so it's inappropriate to hold it during
+///    the whole `pause_and_wait_confirmation`.
 ///
-/// 1. New athlete maybe tries to register into referee after stage 1.
-/// 2. An active athlete may exit before send confirm to referee in stage 2.
-/// 3. `Referee::state` is designed as guard a quick region, so it's inappropriate to hold it
-///    during the whole `pause_and_wait_confirmation`.
-///
-/// ### Solution:
-///
-/// 1. New athletes are checked in the loop of pause_and_wait_confirmation().
+/// ### Solution for the flow:
+/// 1. New athletes are checked in the loop of pause_and_wait_confirmation(). See also later topic.
 /// 2. Send confirm signal in Athlete::Drop.
-/// 3. Lock is holded when necessary during stages.
+/// 3. Lock is holded when necessary during steps.
 ///
-/// ### parameter `reason` of [Referee::pause_and_wait_confirmation]
-/// When reason is [PauseReason::Load] or [PauseReason::Save], it's developer's responsibility to
-/// prevent new athlete from registering into Referee.
+/// ## A Usercase:
+/// Consider later case, a zombie incubator which is also an athlete is creating zombies when a
+/// pause request,
+/// `
+/// let zombie = create_zombie();
+/// referee.register(zombie);
+/// incubator.zombie_cnt++; // later the field should be recorded into savefile.
+/// `
+/// in the case, the zombie is called indirect new-athelte, and because incubator is busy for
+/// creating zombie, it doesn't response to pause request! So to make sure logic correct, new
+/// zombie must receive the pause request. [Athlete::forced_pause_request] is used to append a pause
+/// request to the zombie.
 ///
+/// An independent new-athlete is, on the contrary, can appear anytime during pause stage and
+/// savegame stage.
+///
+/// But to [Referee::pause_and_wait_confirmation], it is impossible to distinguish two kinds of
+/// new-athletes, so in pause stage, all new-athletes are forced a pause request; but to savegame
+/// stage, according to above code, only independent new-athlete can appear, it will not accept
+/// current pause request.
+///
+/// ### More limit on [PauseReason]
+/// Athlete must exit when receive [PauseReason::Load].
 /// When reason is not [PauseReason::Pause], a raii is returned which calls [Referee::resume] when
 /// it's droped.
 ///
@@ -135,11 +157,11 @@ pub struct Referee {
     state: Mutex<RefereeState>,
     // Be used by pause_and_wait_confirmation to queue multiple requests. cmd_queue.1 stores current PauseReason.
     cmd_queue: (Condvar, PauseReason),
-    // Be used to record new athletes during pause_and_wait_confirmation stage 2.
+    // Be used to record new athletes during pause_and_wait_confirmation step 2.
     new_athlete_cnt: usize,
 
     counter: AtomicUsize,
-    pool: HashMap<usize, (Box<dyn SaveSerialize>, String)>,
+    roster: HashMap<usize, (Box<dyn SaveSerialize>, String)>,
 
     pause: Sender<PauseReason>,
     confirm: (UnboundedSender<ConfirmState>, UnboundedReceiver<ConfirmState>),
@@ -154,7 +176,7 @@ impl Referee {
             cmd_queue: (Condvar::new(), PauseReason::None),
             new_athlete_cnt: 0,
             counter: AtomicUsize::new(1),
-            pool: HashMap::new(),
+            roster: HashMap::new(),
             pause: Sender::new(PauseReason::None),
             resume: Sender::new(()),
             confirm: (s, r),
@@ -164,36 +186,34 @@ impl Referee {
     // Safety, methods listed here is protected by lock. <([{
     pub async fn register(&mut self, su: Box<dyn SaveSerialize>, desc: String) -> Athlete {
         let lock = self.state.lock().await;
-        let cur_pause_reason = match *lock {
+        let forced_pause_request = match *lock {
             RefereeState::None => None,
-            _ => {
+            RefereeState::PauseStage => {
                 self.new_athlete_cnt += 1;
                 Some(self.cmd_queue.1)
             }
+            RefereeState::SavegameStage => None,
         };
 
         let id = self.counter.fetch_add(1, Ordering::SeqCst);
         let athlete = Athlete {
             id,
-            cur_pause_reason,
+            forced_pause_request,
             pause: self.pause.subscribe(),
             confirm: self.confirm.0.clone(),
             resume: self.resume.subscribe(),
         };
-        self.pool.insert(id, (su, desc));
+        self.roster.insert(id, (su, desc));
         return athlete;
     }
 
     async fn unregister(&mut self, athlete: &mut Athlete) {
         let lock = self.state.lock().await;
-        self.pool.remove(&athlete.id);
+        self.roster.remove(&athlete.id);
         match *lock {
-            RefereeState::None => {}
-            RefereeState::WaitPauseResponse => {
+            RefereeState::None | RefereeState::SavegameStage => {}
+            RefereeState::PauseStage => {
                 athlete.confirm_ready(ConfirmState::Drop);
-            }
-            RefereeState::ResetbyResumeFn => {
-                unreachable!();
             }
         }
     }
@@ -209,19 +229,19 @@ impl Referee {
             }
         }
 
-        // stage 1: wakeup all athletes by pause_chan <([{
+        // step 1: wakeup all athletes by pause_chan <([{
         let _ = self.pause.send(reason);
-        *lock = RefereeState::WaitPauseResponse;
+        *lock = RefereeState::PauseStage;
         // }])>
 
-        let cur_athletes = self.pool.len();
+        let cur_athletes = self.roster.len();
         let mut droped_athletes = 0;
         let mut new_athletes = 0;
         let mut i = cur_athletes;
         loop {
             drop(lock);
 
-            // stage 2: collect confirmation from athletes, NOLOCK! RefereeState::WaitPauseResponse <([{
+            // step 2: collect confirmation from athletes, NOLOCK! RefereeState::WaitPauseResponse <([{
             while i != 0 {
                 let state = self.confirm.1.recv().await.unwrap();
                 match reason {
@@ -244,7 +264,7 @@ impl Referee {
             }
             // }])>
 
-            // stage 3: relock to see whether there're new athletes during we release lock. <([{
+            // step 3: relock to see whether there're new athletes during we release lock. <([{
             lock = self.state.lock().await;
             i = self.new_athlete_cnt;
             self.new_athlete_cnt = 0;
@@ -256,8 +276,8 @@ impl Referee {
             // }])>
         }
 
-        // stage 4: locked, RefereeState::DoingJob, resume() will reset it to RefereeState::None <([{
-        *lock = RefereeState::ResetbyResumeFn;
+        // step 4: locked, RefereeState::DoingJob, resume() will reset it to RefereeState::None <([{
+        *lock = RefereeState::SavegameStage;
         info!(
             "PauseReason {:?}, new: {}, drop: {}, current {}",
             self.cmd_queue.1, new_athletes, droped_athletes, cur_athletes
@@ -297,12 +317,12 @@ impl Referee {
         let lock = self.state.lock().await;
         println!("state: {:?}", (*lock));
         println!("athletes:");
-        self.pool.iter().for_each(|(k, v)| println!("  {:?}-{:?}", k, v.1));
+        self.roster.iter().for_each(|(k, v)| println!("  {:?}-{:?}", k, v.1));
     }
 
     // Safety: get_athlets is designed for PauseReason::Save context, so no lock at all.
     pub fn get_athlets(&self) -> Box<dyn Iterator<Item = &Box<dyn SaveSerialize>> + '_ + Send> {
-        Box::new(self.pool.iter().map(|i| &i.1.0))
+        Box::new(self.roster.iter().map(|i| &i.1.0))
     }
 }
 
@@ -310,7 +330,7 @@ impl std::fmt::Debug for Referee {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let lock = self.state.blocking_lock();
         write!(f, "state: {:?}", (*lock))?;
-        self.pool.iter().for_each(|(k, v)| {
+        self.roster.iter().for_each(|(k, v)| {
             write!(f, "{:?}-{:?}", k, v.1).unwrap();
         });
         Ok(())
@@ -335,7 +355,7 @@ impl<'a> RefereeGuard<'a> {
 pub struct Athlete {
     id: usize,
 
-    cur_pause_reason: Option<PauseReason>,
+    forced_pause_request: Option<PauseReason>,
 
     pause: Receiver<PauseReason>,
     confirm: UnboundedSender<ConfirmState>,
@@ -344,8 +364,8 @@ pub struct Athlete {
 
 impl Athlete {
     pub async fn wait_pause(&mut self) -> PauseReason {
-        if self.cur_pause_reason.is_some() {
-            return self.cur_pause_reason.take().unwrap();
+        if self.forced_pause_request.is_some() {
+            return self.forced_pause_request.take().unwrap();
         }
         self.pause.changed().await.unwrap();
         *self.pause.borrow_and_update()
@@ -432,8 +452,8 @@ mod tests {
 
         let mut raii = referee.pause_and_wait_confirmation(PauseReason::Save).await.unwrap();
         unsafe {
-            assert!(matches!((*referee_mut).state.get_mut(), RefereeState::ResetbyResumeFn));
-            assert_eq!((*referee_mut).pool.len(), 0);
+            assert!(matches!((*referee_mut).state.get_mut(), RefereeState::SavegameStage));
+            assert_eq!((*referee_mut).roster.len(), 0);
             for _ in (*referee_mut).get_athlets() {
                 assert!(false);
             }
@@ -441,15 +461,16 @@ mod tests {
         raii.async_drop().await;
 
         assert!(matches!(*referee.state.get_mut(), RefereeState::None));
-        assert_eq!(referee.pool.len(), 0);
+        assert_eq!(referee.roster.len(), 0);
 
         mystump_drop(guard);
     }
 
-    // The test forks three athletes:
+    // The test forks four athletes:
     // - a: follows normal flow, wait_pause(), confirm_ready(), wait_resume().
     // - b: exits.
-    // - c: try to register when referee is in pause_and_wait_confirmation(),
+    // - c: try to register when PauseStage.
+    // - d: try to register when SavegameStage.
     // RefereeState::WaitPauseResponse.
     #[tokio::test]
     async fn referee_pausereason_save() {
@@ -457,18 +478,19 @@ mod tests {
         let referee = &mut stump().referee;
         let referee_mut = referee as *mut Referee;
         let (t3, r3) = oneshot::channel();
+        let (t4, r4) = oneshot::channel();
 
         // Athlete a, follows normal flow.
         let mut mock_a = MockSaveSerialize::new();
         mock_a.expect_save().once().returning(|| vec![1]);
         let mut a = referee.register(Box::new(mock_a), "a".to_string()).await;
         assert!(matches!(*referee.state.get_mut(), RefereeState::None));
-        assert_eq!(referee.pool.len(), 1);
+        assert_eq!(referee.roster.len(), 1);
         let task_a = tokio::spawn(async move {
             let pr = a.wait_pause().await;
             assert!(matches!(pr, PauseReason::Save));
             let referee = &mut stump().referee;
-            assert!(matches!(referee.state.get_mut(), RefereeState::WaitPauseResponse));
+            assert!(matches!(referee.state.get_mut(), RefereeState::PauseStage));
             // Notify athlete3 to register during referee is in pause process.
             t3.send(()).unwrap();
             sleep(Duration::from_millis(100)).await;
@@ -481,7 +503,7 @@ mod tests {
         mock_b.expect_save().never();
         let mut b = referee.register(Box::new(mock_b), "a".to_string()).await;
         assert!(matches!(*referee.state.get_mut(), RefereeState::None));
-        assert_eq!(referee.pool.len(), 2);
+        assert_eq!(referee.roster.len(), 2);
         let task_b = tokio::spawn(async move {
             sleep(Duration::from_millis(100)).await;
             b.async_drop().await;
@@ -494,26 +516,43 @@ mod tests {
             r3.await.unwrap();
             let referee = &mut stump().referee;
             let mut c = referee.register(Box::new(mock_c), "c".to_string()).await;
-            assert!(matches!(referee.state.get_mut(), RefereeState::WaitPauseResponse));
+            assert!(matches!(c.forced_pause_request.unwrap(), PauseReason::Save));
+            assert!(matches!(referee.state.get_mut(), RefereeState::PauseStage));
             assert!(matches!(referee.new_athlete_cnt, 1));
-            assert_eq!(referee.pool.len(), 3);
+            assert_eq!(referee.roster.len(), 3);
             c.async_drop().await;
+        });
+
+        // Athlete d, try to register then exit.
+        let mut mock_d = MockSaveSerialize::new();
+        mock_d.expect_save().never();
+        let task_d = tokio::spawn(async move {
+            r4.await.unwrap();
+            let referee = &mut stump().referee;
+            let mut d = referee.register(Box::new(mock_d), "d".to_string()).await;
+            assert!(d.forced_pause_request.is_none());
+            assert!(matches!(referee.state.get_mut(), RefereeState::SavegameStage));
+            assert!(matches!(referee.new_athlete_cnt, 0));
+            assert_eq!(referee.roster.len(), 2);
+            d.async_drop().await;
         });
 
         // Referee.
         let mut raii = referee.pause_and_wait_confirmation(PauseReason::Save).await.unwrap();
         unsafe {
-            assert!(matches!((*referee_mut).state.get_mut(), RefereeState::ResetbyResumeFn));
-            assert_eq!((*referee_mut).pool.len(), 1);
+            assert!(matches!((*referee_mut).state.get_mut(), RefereeState::SavegameStage));
+            assert_eq!((*referee_mut).roster.len(), 1);
             for i in (*referee_mut).get_athlets() {
                 assert_eq!(i.save(), vec![1]);
             }
+            t4.send(()).unwrap();
+            sleep(Duration::from_millis(100)).await;
         }
         raii.async_drop().await;
 
-        let _ = join!(task_a, task_b, task_c);
+        let _ = join!(task_a, task_b, task_c, task_d);
         assert!(matches!(*referee.state.get_mut(), RefereeState::None));
-        assert_eq!(referee.pool.len(), 0);
+        assert_eq!(referee.roster.len(), 0);
 
         mystump_drop(guard);
     }
@@ -529,7 +568,7 @@ mod tests {
         let mock_a = MockSaveSerialize::new();
         let mut a = referee.register(Box::new(mock_a), "a".to_string()).await;
         assert!(matches!(*referee.state.get_mut(), RefereeState::None));
-        assert_eq!(referee.pool.len(), 1);
+        assert_eq!(referee.roster.len(), 1);
         let task_a = tokio::spawn(async move {
             let pr = a.wait_pause().await;
             assert!(matches!(pr, PauseReason::Load));
@@ -542,7 +581,7 @@ mod tests {
 
         let _ = join!(task_a);
         assert!(matches!(*referee.state.get_mut(), RefereeState::None));
-        assert_eq!(referee.pool.len(), 0);
+        assert_eq!(referee.roster.len(), 0);
 
         mystump_drop(guard);
     }
