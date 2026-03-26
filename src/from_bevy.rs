@@ -239,9 +239,9 @@ fn std_backend_callback(mut double_click: Local<(Option<Instant>, String)>, mut 
                 let prev = &double_click.1;
                 info!("double click!!!!{:?}-{:?}", prev, cur);
                 if cur == "<ctrl>" {
-                    key_combination = cur.clone() + prev;
+                    key_combination = cur.clone() + prev.as_str();
                 } else {
-                    key_combination = prev.to_owned() + &cur;
+                    key_combination = prev.to_owned() + cur.as_str();
                 }
             }
 
@@ -370,7 +370,7 @@ impl DeveloperBackend {
         }
 
         // <([{
-        let l = "foo ".to_owned() + &l;
+        let l = "foo ".to_owned() + l.as_str();
         let l: Vec<_> = l.split_whitespace().collect();
         let l = Cli::try_parse_from(l);
         if l.is_err() {

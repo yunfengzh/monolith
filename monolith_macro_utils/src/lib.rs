@@ -204,3 +204,55 @@ pub fn payload_to_attachment(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 // }])>
+
+// User-defined event to Rhai::Map <([{
+/// #derive[RhaiMap]
+/// struct XEvent { .. }
+///
+/// // the proc macro is expanded to
+/// impl FromXEvent> for rhai::Map { .. }
+///
+/// Only a simple struct is supported, no nested struct, no generics.
+#[proc_macro_derive(RhaiMap)]
+pub fn derive_rhai_map(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let struct_name = &input.ident;
+
+    let fields = match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(fields) => &fields.named,
+            _ => panic!("RhaiMap supports named-field"),
+        },
+        _ => panic!("RhaiMap supports struct"),
+    };
+
+    let mut field_conversions_from = Vec::new();
+
+    for field in fields.iter() {
+        let field_name = field.ident.as_ref().unwrap();
+        let field_name_str = field_name.to_string();
+
+        field_conversions_from.push(quote! {
+            map.insert(
+                #field_name_str.into(),
+                rhai::Dynamic::from(value.#field_name)
+            );
+        });
+    }
+
+    let expanded = quote! {
+
+        impl From<#struct_name> for rhai::Map {
+            fn from(value: #struct_name) -> Self {
+                let mut map: rhai::Map = rhai::Map::new();
+                #(#field_conversions_from)*
+                map
+            }
+        }
+
+    };
+
+    TokenStream::from(expanded)
+}
+// }])>

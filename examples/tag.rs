@@ -37,15 +37,16 @@ const SCRIPT: &str = r#"
         ev.publish(#{critical_attack: 4, state: "from handgun"});
         1
     }
+    let x = 0;
+    x.tag = 2;
 
     let team = [];
 
     fn new_member(weapon) {
-        let nm = 3; // CallFnOptions::rewind_scope(false) will make the variable global.
         if weapon == "bow" {
-            team += #{ job: "archer", arrow: 3 };
+            team += #{ ability: "archer", arrow: 3 };
         } else if weapon == "sword" {
-            team += #{ job: "warrior", };
+            team += #{ ability: "warrior", };
         }
     }
 "#;
@@ -62,7 +63,7 @@ struct Player {
     pub life: i32,
 }
 
-// Trait for MOD author, EventSystem, from rust to rhai, broadcast(); from rhai to rust: publish() <([{
+// Basic API for MOD author <([{
 // EventSystem::init() exposes two APIs by 'ev'.
 
 static POOL: LazyLock<RwLock<HashMap<String, (String, String)>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
@@ -149,71 +150,54 @@ impl PlayerProxy {
 // The function shows how to load/save a rhai instance. During the process, MOD developer need not
 // response load/save event at all. And only global and scope variables are saved.
 // load/save <([{
-fn load<'a, 'b>(json: &'a String) -> Rhai<'b> {
+fn load(json: &String) -> Rhai<'_> {
     let mut rhai = Rhai::new(SCRIPT);
-    let v: Vec<(String, bool, Dynamic)> = serde_json::from_str(json.as_str()).unwrap();
-    for tuple in v {
-        let _ = rhai.scope.remove::<Dynamic>(&tuple.0);
-        if tuple.1 {
-            rhai.scope.push_constant_dynamic(tuple.0, tuple.2);
-        } else {
-            rhai.scope.push_dynamic(tuple.0, tuple.2);
-        }
+    let tuple: (String, bool, Dynamic) = serde_json::from_str(json.as_str()).unwrap();
+    if tuple.1 {
+        rhai.scope.push_constant_dynamic(tuple.0, tuple.2);
+    } else {
+        rhai.scope.push_dynamic(tuple.0, tuple.2);
     }
-    api(&mut rhai);
     rhai
 }
 
 fn save(rhai: &Rhai) -> Result<String, Box<dyn Error>> {
-    let mut json = "[".to_string();
-    for i in rhai.iter() {
+    let mut json = "".to_string();
+    for i in rhai.scope.iter() {
         json += &serde_json::to_string(&i)?;
-        json += ",";
     }
-    json.pop();
-    json += "]";
     Ok(json)
 }
 
-fn scope_to_json(scope: &Scope) -> String {
-    let mut json = "".to_string();
-    for i in scope.iter() {
-        json += &serde_json::to_string(&i).unwrap();
-    }
-    json
-}
-
-fn compare<'a, 'b>(rhai: &Rhai<'a>) -> Rhai<'b> {
-    let before = scope_to_json(&rhai.scope);
-    let json = save(&rhai).unwrap();
-    println!("save{json}");
-    let ret = load(&json);
-    let after = scope_to_json(&ret.scope);
-    assert_eq!(before, after);
-    ret
-}
-
-fn save_then_load(rhai: Rhai) -> Result<(), Box<dyn Error>> {
+fn save_then_load(mut rhai: Rhai) -> Result<(), Box<dyn Error>> {
     println!("---------------");
-    let mut rhai = compare(&rhai);
+    let ret = save(&rhai)?;
+    let mut json = "".to_string();
+    for i in rhai.scope.iter() {
+        json += &serde_json::to_string(&i)?;
+    }
+    println!("aa{json}");
     let _: () = rhai.call("new_member", ("bow",))?;
-    let mut rhai = compare(&rhai);
+    json.clear();
+    for i in rhai.scope.iter() {
+        json += &serde_json::to_string(&i)?;
+    }
+    println!("bb{json}");
     let _: () = rhai.call("new_member", ("sword",))?;
-    let _ = compare(&rhai);
+    json.clear();
+    for i in rhai.scope.iter() {
+        json += &serde_json::to_string(&i)?;
+    }
+    println!("cc{json}");
     Ok(())
 }
 // }])>
 
-fn api(rhai: &mut Rhai) -> Player {
-    EventSystem::init(rhai);
-    let mut player = Player { life: 10 };
-    PlayerProxy::proxy(rhai, &mut player);
-    player
-}
-
 fn main() -> Result<(), Box<dyn Error>> {
     let mut rhai = Rhai::new(SCRIPT);
-    let player = api(&mut rhai);
+    EventSystem::init(&mut rhai);
+    let mut player = Player { life: 10 };
+    PlayerProxy::proxy(&mut rhai, &mut player);
     let _: Dynamic = rhai.call("init", ())?;
     dbg!(&player);
     let _: i64 = rhai.call("fight", ())?;

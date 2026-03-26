@@ -12,7 +12,7 @@ doc:
 	cargo doc --no-deps --open
 
 expand:
-	cargo expand --example stump > a
+	CARGO_TARGET_DIR=${HOME}/tmp cargo expand --example rhai > a
 
 clean:
 	rm -f a.out
