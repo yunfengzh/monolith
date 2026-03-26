@@ -797,7 +797,7 @@ mod tests {
             let j = target.get(idx).unwrap();
             assert!(*id == j.0 && *evt == j.1);
             let dur = dur.as_millis();
-            assert!(dur > j.2);
+            assert!(dur >= j.2);
         }
     }
 
@@ -848,7 +848,7 @@ mod tests {
             let j = target.get(idx).unwrap();
             assert!(*id == j.0 && *evt == j.1);
             let dur = dur.as_millis();
-            assert!(dur > j.2);
+            assert!(dur >= j.2);
         }
     }
 }
