@@ -256,3 +256,58 @@ pub fn derive_rhai_map(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 // }])>
+
+// collect trait method <([{
+#[proc_macro_attribute]
+pub fn scan_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input_trait = parse_macro_input!(item as ItemTrait);
+    let trait_name = &input_trait.ident;
+
+    // 生成 Proxy 结构体的名字
+    let proxy_struct_name = format_ident!("{}Proxy", trait_name);
+
+    // --- 修改开始 ---
+    // 我们不再存储元组，而是存储三个独立的 Vec，保持索引同步
+    let mut method_names = Vec::new();
+    let mut method_inputs = Vec::new();
+    let mut method_outputs = Vec::new();
+
+    for item in input_trait.items.iter() {
+        if let TraitItem::Fn(method) = item {
+            method_names.push(&method.sig.ident);
+            method_inputs.push(&method.sig.inputs);
+            method_outputs.push(&method.sig.output);
+        }
+    }
+    // --- 修改结束 ---
+
+    // 生成代码
+    let expanded = quote! {
+        // 原始 Trait
+        #input_trait
+
+        // 生成的 Proxy 结构体
+        pub struct #proxy_struct_name;
+
+
+        pub fn get_method_names() -> Vec<String> {
+            vec![
+                #( stringify!(#method_names).to_string() ),*
+            ]
+        }
+
+        // 实现 Trait
+        impl #trait_name for #proxy_struct_name {
+            // 这里我们利用 quote 的特性：
+            // 当多个变量都是集合时，#( #var1 #var2 )* 会自动按索引配对展开
+            #(
+                fn #method_names(#method_inputs) #method_outputs {
+                    todo!()
+                }
+            )*
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+// }])>

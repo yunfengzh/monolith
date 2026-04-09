@@ -7,7 +7,7 @@ use std::{
     sync::{LazyLock, RwLock},
 };
 
-use monolith_macro_utils::RhaiMap;
+use monolith_macro_utils::{RhaiMap, scan_methods};
 use rhai::*;
 use yunfengzh_monolith::prelude::*;
 // }])>
@@ -215,6 +215,13 @@ fn save_then_load(rhai: Rhai) -> Result<(), Box<dyn Error>> {
 }
 // }])>
 
+// trait macro <([{
+#[scan_methods]
+trait LifeTrait {
+    fn on_player_die(&self, i: u32) -> String;
+}
+// }])>
+
 fn api(rhai: &mut Rhai, player: &mut Player) {
     EventSystem::init(rhai);
     PlayerProxy::proxy(rhai, player);
@@ -232,5 +239,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     dbg!(&player);
     save_then_load(rhai)?;
+    println!("{:?}", get_method_names());
     Ok(())
 }
