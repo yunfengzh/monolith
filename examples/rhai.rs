@@ -14,22 +14,26 @@ use yunfengzh_monolith::prelude::*;
 
 // SCRIPT <([{
 const SCRIPT: &str = r#"
-    let my_handler = #{
+    let relic = #{
         count: 0,
     };
 
     print("script eval");
     fn init() {
-        my_handler.count  = 23;
-        print(`rhai init called ${my_handler}`);
-        ev.register("LifeEvent", "my_handler", "on_player_die");
+        relic.count  = 1;
+        print(`rhai init called, relic got a revive point! ${relic}`);
+        ev.register("LifeEvent", "relic", "on_player_die");
         true
     }
 
     fn on_player_die(evt) {
         print(`rhai event handler: Player ${evt.state}, ${evt.critical_attack}`);
-        player.set(3);
-        #{state: 1, msg: "revive done"}
+        if relic.count > 0 {
+            player.set(3);
+            return #{state: 1, msg: "revive done"};
+        } else {
+            return #{state: 0, msg: "No more reserve"};
+        }
     }
 
     fn fight() {
@@ -57,15 +61,16 @@ struct LifeEvent {
     state: String,
 }
 
-#[derive(Clone, Debug)]
-struct Player {
-    pub life: i32,
-}
-
 // Trait for MOD author, EventSystem, from rust to rhai, broadcast(); from rhai to rust: publish() <([{
 // EventSystem::init() exposes two APIs by 'ev'.
 
 static POOL: LazyLock<RwLock<HashMap<String, (String, String)>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
+
+struct BroadcastTray {
+    trait_name: String,
+    method: String,
+    params: String,
+}
 
 #[derive(Clone)]
 struct EventSystem();
@@ -109,6 +114,11 @@ impl EventSystem {
 // }])>
 
 // Rust struct is exported to rhai script by proxy <([{
+#[derive(Clone, Debug)]
+struct Player {
+    pub life: i32,
+}
+
 #[derive(Clone)]
 struct PlayerProxy(usize);
 
@@ -151,6 +161,7 @@ impl PlayerProxy {
 // load/save <([{
 fn load<'a, 'b>(json: &'a String) -> Rhai<'b> {
     let mut rhai = Rhai::new(SCRIPT);
+    let mut player = Player { life: 10 };
     let v: Vec<(String, bool, Dynamic)> = serde_json::from_str(json.as_str()).unwrap();
     for tuple in v {
         let _ = rhai.scope.remove::<Dynamic>(&tuple.0);
@@ -160,7 +171,7 @@ fn load<'a, 'b>(json: &'a String) -> Rhai<'b> {
             rhai.scope.push_dynamic(tuple.0, tuple.2);
         }
     }
-    api(&mut rhai);
+    api(&mut rhai, &mut player);
     rhai
 }
 
@@ -204,16 +215,15 @@ fn save_then_load(rhai: Rhai) -> Result<(), Box<dyn Error>> {
 }
 // }])>
 
-fn api(rhai: &mut Rhai) -> Player {
+fn api(rhai: &mut Rhai, player: &mut Player) {
     EventSystem::init(rhai);
-    let mut player = Player { life: 10 };
-    PlayerProxy::proxy(rhai, &mut player);
-    player
+    PlayerProxy::proxy(rhai, player);
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut rhai = Rhai::new(SCRIPT);
-    let player = api(&mut rhai);
+    let mut player = Player { life: 10 };
+    api(&mut rhai, &mut player);
     let _: Dynamic = rhai.call("init", ())?;
     dbg!(&player);
     let _: i64 = rhai.call("fight", ())?;
