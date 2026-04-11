@@ -8,6 +8,7 @@ use std::{
 };
 
 use monolith_macro_utils::{RhaiMap, scan_methods};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 use rhai::*;
 use yunfengzh_monolith::prelude::*;
 // }])>
@@ -18,10 +19,10 @@ const SCRIPT: &str = r#"
         count: 0,
     };
 
-    print("script eval");
+    print("script eval ${Status_Some}");
     fn init() {
         relic.count  = 1;
-        print(`rhai init called, relic got a revive point! ${relic}`);
+        print(`rhai init called, relic got a revive point! ${relic} ${Status_Some}`);
         ev.register("LifeEvent", "relic", "on_player_die");
         true
     }
@@ -197,6 +198,7 @@ fn scope_to_json(scope: &Scope) -> String {
 fn compare<'a, 'b>(rhai: &Rhai<'a>) -> Rhai<'b> {
     let before = scope_to_json(&rhai.scope);
     let json = save(&rhai).unwrap();
+    println!("before{before}");
     println!("save{json}");
     let ret = load(&json);
     let after = scope_to_json(&ret.scope);
@@ -222,9 +224,23 @@ trait LifeTrait {
 }
 // }])>
 
+// enum <([{
+#[derive(Clone, TryFromPrimitive, IntoPrimitive)]
+#[repr(u32)]
+enum Status {
+    None = 0,
+    Some = 100,
+}
+
+fn register_rust_enum(rhai: &mut Rhai) {
+    rhai.scope.push_constant("Status_Some", <Status as Into<u32>>::into(Status::Some));
+}
+// }])>
+
 fn api(rhai: &mut Rhai, player: &mut Player) {
     EventSystem::init(rhai);
     PlayerProxy::proxy(rhai, player);
+    register_rust_enum(rhai);
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
