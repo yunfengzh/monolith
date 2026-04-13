@@ -264,7 +264,7 @@ pub fn scan_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let trait_name = &input_trait.ident;
 
     // 生成 Proxy 结构体的名字
-    let proxy_struct_name = format_ident!("{}Proxy", trait_name);
+    let proxy_struct_name = format_ident!("{}ToRhai", trait_name);
 
     // --- 修改开始 ---
     // 我们不再存储元组，而是存储三个独立的 Vec，保持索引同步
@@ -287,7 +287,8 @@ pub fn scan_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #input_trait
 
         // 生成的 Proxy 结构体
-        pub struct #proxy_struct_name;
+        #[derive(Clone, Debug)]
+        pub struct #proxy_struct_name(*mut Rhai);
 
 
         pub fn get_method_names() -> Vec<String> {
@@ -302,6 +303,9 @@ pub fn scan_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
             // 当多个变量都是集合时，#( #var1 #var2 )* 会自动按索引配对展开
             #(
                 fn #method_names(#method_inputs) #method_outputs {
+                    // let rhai = unsafe { &mut *self.0 };
+                    // let m: Map = event.into();
+                    // let ret: Dynamic = rhai.call(#method_names, (m,))?;
                     todo!()
                 }
             )*

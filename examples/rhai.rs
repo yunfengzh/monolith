@@ -16,20 +16,16 @@ use yunfengzh_monolith::prelude::*;
 // SCRIPT <([{
 const SCRIPT: &str = r#"
     let relic = #{
-        count: 0,
+        count: 1,
     };
 
     print("script eval ${Status_Some}");
-    fn init() {
-        relic.count  = 1;
-        print(`rhai init called, relic got a revive point! ${relic} ${Status_Some}`);
-        ev.register("LifeEvent", "relic", "on_player_die");
-        true
-    }
+    declare_trait("relic", "Life");
 
     fn on_player_die(evt) {
         print(`rhai event handler: Player ${evt.state}, ${evt.critical_attack}`);
         if relic.count > 0 {
+            relic.count -= 1;
             player.set(3);
             return #{state: 1, msg: "revive done"};
         } else {
@@ -39,7 +35,6 @@ const SCRIPT: &str = r#"
 
     fn fight() {
         player.adjust(-15);
-        ev.publish(#{critical_attack: 4, state: "from handgun"});
         1
     }
 
@@ -57,67 +52,16 @@ const SCRIPT: &str = r#"
 // }])>
 
 #[derive(Clone, Debug, RhaiMap)]
-struct LifeEvent {
+struct Hurt {
     critical_attack: i64,
     state: String,
 }
-
-// Trait for MOD author, EventSystem, from rust to rhai, broadcast(); from rhai to rust: publish() <([{
-// EventSystem::init() exposes two APIs by 'ev'.
-
-static POOL: LazyLock<RwLock<HashMap<String, (String, String)>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
-
-struct BroadcastTray {
-    trait_name: String,
-    method: String,
-    params: String,
-}
-
-#[derive(Clone)]
-struct EventSystem();
-
-impl EventSystem {
-    fn init(rhai: &mut Rhai) {
-        // Generally, we need prepare API for MOD author, it is done by obj.method, such as, 'ev'
-        // implements two methods register/publish.
-        let es = EventSystem();
-        rhai.engine.register_fn("register", EventSystem::register);
-        rhai.engine.register_fn("publish", EventSystem::publish);
-        rhai.scope.push("ev", es);
-    }
-
-    fn register(&mut self, event_trait: String, obj: String, method: String) {
-        POOL.write().unwrap().insert(event_trait, (obj, method));
-    }
-
-    fn broadcast(rhai: &mut Rhai, event: LifeEvent) -> Result<bool, Box<dyn Error>> {
-        match event {
-            LifeEvent { .. } => {
-                let val = POOL.read().unwrap();
-                let val = val.get("LifeEvent");
-                if val.is_some() {
-                    let (_, func) = val.unwrap();
-                    let m: Map = event.into();
-                    let ret: Dynamic = rhai.call(func, (m,))?;
-                    println!("rust result from rhai event: {:?}", ret);
-                }
-            }
-        };
-
-        Ok(true)
-    }
-
-    fn publish(&mut self, evt: rhai::Map) {
-        let evt = Map::from(evt);
-        dbg!(evt);
-    }
-}
-// }])>
 
 // Rust struct is exported to rhai script by proxy <([{
 #[derive(Clone, Debug)]
 struct Player {
     pub life: i32,
+    consumers: Vec<LifeToRhai>,
 }
 
 #[derive(Clone)]
@@ -160,9 +104,9 @@ impl PlayerProxy {
 // The function shows how to load/save a rhai instance. During the process, MOD developer need not
 // response load/save event at all. And only global and scope variables are saved.
 // load/save <([{
-fn load<'a, 'b>(json: &'a String) -> Rhai<'b> {
+fn load(json: &String) -> Rhai {
     let mut rhai = Rhai::new(SCRIPT);
-    let mut player = Player { life: 10 };
+    let mut player = Player { life: 10, consumers: Vec::new() };
     let v: Vec<(String, bool, Dynamic)> = serde_json::from_str(json.as_str()).unwrap();
     for tuple in v {
         let _ = rhai.scope.remove::<Dynamic>(&tuple.0);
@@ -195,7 +139,7 @@ fn scope_to_json(scope: &Scope) -> String {
     json
 }
 
-fn compare<'a, 'b>(rhai: &Rhai<'a>) -> Rhai<'b> {
+fn compare(rhai: &Rhai) -> Rhai {
     let before = scope_to_json(&rhai.scope);
     let json = save(&rhai).unwrap();
     println!("before{before}");
@@ -218,9 +162,24 @@ fn save_then_load(rhai: Rhai) -> Result<(), Box<dyn Error>> {
 // }])>
 
 // trait macro <([{
-#[scan_methods]
-trait LifeTrait {
-    fn on_player_die(&self, i: u32) -> String;
+// #[scan_methods]
+trait Life {
+    fn on_player_die(&self, evt: Hurt) -> Dynamic;
+}
+
+pub fn get_method_names() -> Vec<String> {
+    vec!["on_player_die".to_string()]
+}
+
+#[derive(Clone, Debug)]
+pub struct LifeToRhai(*mut Rhai);
+
+impl Life for LifeToRhai {
+    fn on_player_die(&self, evt: Hurt) -> Dynamic {
+        let rhai = unsafe { &mut *self.0 };
+        let m: Map = evt.into();
+        rhai.call("on_player_die", (m,)).unwrap()
+    }
 }
 // }])>
 
@@ -238,20 +197,25 @@ fn register_rust_enum(rhai: &mut Rhai) {
 // }])>
 
 fn api(rhai: &mut Rhai, player: &mut Player) {
-    EventSystem::init(rhai);
     PlayerProxy::proxy(rhai, player);
     register_rust_enum(rhai);
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut rhai = Rhai::new(SCRIPT);
-    let mut player = Player { life: 10 };
+    let mut player = Player { life: 10, consumers: Vec::new() };
+    let x = rhai.search_trait("Life");
+    if x.is_some() {
+        player.consumers.push(LifeToRhai(&mut rhai as *mut _));
+    }
     api(&mut rhai, &mut player);
-    let _: Dynamic = rhai.call("init", ())?;
     dbg!(&player);
     let _: i64 = rhai.call("fight", ())?;
     if player.life <= 0 {
-        EventSystem::broadcast(&mut rhai, LifeEvent { critical_attack: -15, state: "need heal".to_string() })?;
+        for i in player.consumers.iter() {
+            let ret = i.on_player_die(Hurt { critical_attack: -15, state: "need heal".to_string() });
+            println!("consumer result: {:?}", ret);
+        }
     }
     dbg!(&player);
     save_then_load(rhai)?;
