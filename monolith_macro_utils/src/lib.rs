@@ -258,60 +258,165 @@ pub fn derive_rhai_map(input: TokenStream) -> TokenStream {
 // }])>
 
 // collect trait method <([{
+/// 属性宏：分析 Trait 方法的参数
 #[proc_macro_attribute]
-pub fn scan_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn analyze_trait_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // 1. 将输入的 TokenStream 解析为 Trait 的语法树
     let input_trait = parse_macro_input!(item as ItemTrait);
+
+    // 获取 Trait 的名称
     let trait_name = &input_trait.ident;
 
-    // 生成 Proxy 结构体的名字
-    let proxy_struct_name = format_ident!("{}ToRhai", trait_name);
+    let struct_name = quote::format_ident!("{}ToRhai", trait_name);
+    let mut method_impls = Vec::new();
 
-    // --- 修改开始 ---
-    // 我们不再存储元组，而是存储三个独立的 Vec，保持索引同步
-    let mut method_names = Vec::new();
-    let mut method_inputs = Vec::new();
-    let mut method_outputs = Vec::new();
-
-    for item in input_trait.items.iter() {
+    // 2. 遍历 Trait 中的所有项（我们只关心方法）
+    for item in &input_trait.items {
         if let TraitItem::Fn(method) = item {
-            method_names.push(&method.sig.ident);
-            method_inputs.push(&method.sig.inputs);
-            method_outputs.push(&method.sig.output);
+            let method_name = &method.sig.ident;
+            println!("  ├─ 📝 方法: {}", method_name);
+            let method_inputs = &method.sig.inputs; // 参数列表
+            let method_output = &method.sig.output; // 返回值类型
+
+            let mut params = Vec::new();
+            let mut vcp = Vec::new();
+
+            // 3. 遍历方法的参数
+            for input in &method.sig.inputs {
+                match input {
+                    // 忽略 &self, self 等接收者
+                    FnArg::Receiver(_) => continue,
+
+                    FnArg::Typed(PatType { pat, ty, .. }) => {
+                        // 获取参数名 (将 pat: i32 中的 pat 转为字符串)
+                        let arg_name = quote!(#pat).to_string();
+                        let param_name = match &**pat {
+                            Pat::Ident(pat_ident) => &pat_ident.ident,
+                            _ => continue, // 忽略复杂模式
+                        };
+
+                        // 获取类型
+                        let type_str = quote!(#ty).to_string();
+
+                        // 判断是否为 Struct
+                        let is_struct = is_likely_struct(ty.as_ref());
+                        let struct_flag = if is_struct { "✅ 是" } else { "❌ 否" };
+
+                        println!("  │   ├─ 参数: {:<15} 类型: {:<20} 是否Struct: {}", arg_name, type_str, struct_flag);
+                        if is_struct {
+                            let line = quote! {
+                                let #param_name: Map = #param_name.into();
+                            };
+                            params.push(line);
+                        }
+                        let cp = quote! { #param_name, };
+                        vcp.push(cp);
+                    }
+                }
+            }
+
+            // rhai.call("on_player_die", (m, cnt)).unwrap()
+            let impl_code = quote! {
+                fn #method_name(#method_inputs) #method_output {
+                    let rhai = unsafe { &mut *self.0 };
+                    #(#params)*
+                    rhai.call(stringify!(#method_name), (#(#vcp)*)).unwrap()
+                }
+            };
+            method_impls.push(impl_code);
         }
     }
-    // --- 修改结束 ---
 
-    // 生成代码
-    let expanded = quote! {
-        // 原始 Trait
+    // 4. 返回原始代码，确保代码能正常编译
+    // 如果这里不返回原始代码，Trait 定义就会丢失
+    quote! {
         #input_trait
 
-        // 生成的 Proxy 结构体
-        #[derive(Clone, Debug)]
-        pub struct #proxy_struct_name(*mut Rhai);
+        // 生成新的结构体
+        #[derive(Debug, Clone)]
+        pub struct #struct_name(*mut Rhai);
 
-
-        pub fn get_method_names() -> Vec<String> {
-            vec![
-                #( stringify!(#method_names).to_string() ),*
-            ]
+        // 为该结构体实现 trait
+        impl #trait_name for #struct_name {
+            #(#method_impls)*
         }
+    }
+    .into()
+}
 
-        // 实现 Trait
-        impl #trait_name for #proxy_struct_name {
-            // 这里我们利用 quote 的特性：
-            // 当多个变量都是集合时，#( #var1 #var2 )* 会自动按索引配对展开
-            #(
-                fn #method_names(#method_inputs) #method_outputs {
-                    // let rhai = unsafe { &mut *self.0 };
-                    // let m: Map = event.into();
-                    // let ret: Dynamic = rhai.call(#method_names, (m,))?;
-                    todo!()
+/// 辅助函数：判断一个类型是否“看起来像”一个 Struct
+fn is_likely_struct(ty: &Type) -> bool {
+    match ty {
+        // 情况 A: 简单路径类型，如 MyStruct
+        Type::Path(type_path) => {
+            let path = &type_path.path;
+
+            // 如果是单段路径（没有 ::）
+            if path.segments.len() == 1 {
+                let ident = &path.segments.first().unwrap().ident;
+                let name = ident.to_string();
+
+                // 排除 Rust 基本类型
+                if is_primitive_type(&name) {
+                    return false;
                 }
-            )*
-        }
-    };
 
-    TokenStream::from(expanded)
+                // 启发式规则：Rust 中 Struct/Enum 通常首字母大写
+                // 这是一个常见的约定，虽然不是 100% 准确
+                if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    return true;
+                }
+            }
+            false
+        }
+
+        // 情况 B: 引用类型，如 &MyStruct
+        Type::Reference(type_ref) => {
+            // 递归检查引用的内部类型
+            is_likely_struct(&type_ref.elem)
+        }
+
+        // 情况 C: 智能指针，如 Box<MyStruct> 或 Arc<MyStruct>
+        Type::Path(_) => {
+            // 这里可以扩展逻辑去解析泛型参数，例如提取 Box<T> 中的 T
+            // 为了简化，这里暂时不处理复杂的泛型嵌套
+            false
+        }
+
+        _ => false,
+    }
+}
+
+/// 排除基本类型
+fn is_primitive_type(name: &str) -> bool {
+    matches!(
+        name,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+            | "str"
+            | "String"
+            | "Vec"
+            | "Option"
+            | "Result"
+            | "Box"
+            | "Rc"
+            | "Arc"
+            | "()"
+            | "None"
+            | "Some"
+    )
 }
 // }])>

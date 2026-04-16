@@ -1,13 +1,9 @@
 // vim: foldmarker=<([{,}])> foldmethod=marker
 
 // <([{
-use std::{
-    collections::HashMap,
-    error::Error,
-    sync::{LazyLock, RwLock},
-};
+use std::error::Error;
 
-use monolith_macro_utils::{RhaiMap, scan_methods};
+use monolith_macro_utils::{RhaiMap, analyze_trait_methods};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use rhai::*;
 use yunfengzh_monolith::prelude::*;
@@ -22,8 +18,8 @@ const RELIC: &str = r#"
     print("script eval ${Status_Some}");
     declare_trait("relic", "Life");
 
-    fn on_player_die(evt) {
-        print(`rhai event handler: Player ${evt.state}, ${evt.critical_attack}`);
+    fn on_player_die(evt, cnt) {
+        print(`rhai event handler: Player ${evt}, ${cnt}`);
         if relic.count > 0 {
             relic.count -= 1;
             player.set(3);
@@ -59,7 +55,7 @@ struct Hurt {
     state: String,
 }
 
-// Rust struct is exported to rhai script by proxy <([{
+// Rhai to Player <([{
 #[derive(Clone, Debug)]
 struct Player {
     pub life: i32,
@@ -98,6 +94,12 @@ impl PlayerProxy {
     pub fn adjust(&mut self, value: i64) {
         let player: &mut Player = self.as_mut();
         player.life += value as i32;
+        if player.life <= 0 {
+            for i in player.consumers.iter() {
+                let ret = i.on_player_die(Hurt { critical_attack: value, state: "need heal".to_string() }, 17);
+                println!("result from rhai: {:?}", ret);
+            }
+        }
     }
 
     pub fn set(&mut self, mut value: i64) {
@@ -106,6 +108,20 @@ impl PlayerProxy {
         let player: &mut Player = self.as_mut();
         player.life = value as i32;
     }
+}
+// }])>
+
+// Player to rhai <([{
+#[analyze_trait_methods]
+trait Life {
+    fn on_player_die(&self, evt: Hurt, cnt: i64) -> Dynamic;
+
+    fn on_player_up(&self, cnt: i64);
+    fn on_player_revive(&self) -> Hurt;
+}
+
+pub fn get_method_names() -> Vec<String> {
+    vec!["on_player_die".to_string()]
 }
 // }])>
 
@@ -171,28 +187,6 @@ fn save_then_load() -> Result<(), Box<dyn Error>> {
 }
 // }])>
 
-// trait macro <([{
-// #[scan_methods]
-trait Life {
-    fn on_player_die(&self, evt: Hurt) -> Dynamic;
-}
-
-pub fn get_method_names() -> Vec<String> {
-    vec!["on_player_die".to_string()]
-}
-
-#[derive(Clone, Debug)]
-pub struct LifeToRhai(*mut Rhai);
-
-impl Life for LifeToRhai {
-    fn on_player_die(&self, evt: Hurt) -> Dynamic {
-        let rhai = unsafe { &mut *self.0 };
-        let m: Map = evt.into();
-        rhai.call("on_player_die", (m,)).unwrap()
-    }
-}
-// }])>
-
 // enum <([{
 #[derive(Clone, TryFromPrimitive, IntoPrimitive)]
 #[repr(u32)]
@@ -222,12 +216,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     api(&mut rhai, &mut player);
     dbg!(&player);
     let _: i64 = rhai.call("fight", ())?;
-    if player.life <= 0 {
-        for i in player.consumers.iter() {
-            let ret = i.on_player_die(Hurt { critical_attack: -15, state: "need heal".to_string() });
-            println!("consumer result: {:?}", ret);
-        }
-    }
     dbg!(&player);
 
     save_then_load()?;
