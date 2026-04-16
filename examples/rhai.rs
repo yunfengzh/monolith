@@ -14,7 +14,7 @@ use yunfengzh_monolith::prelude::*;
 // }])>
 
 // SCRIPT <([{
-const SCRIPT: &str = r#"
+const RELIC: &str = r#"
     let relic = #{
         count: 1,
     };
@@ -37,7 +37,9 @@ const SCRIPT: &str = r#"
         player.adjust(-15);
         1
     }
+"#;
 
+const TEAM: &str = r#"
     let team = [];
 
     fn new_member(weapon) {
@@ -62,6 +64,12 @@ struct Hurt {
 struct Player {
     pub life: i32,
     consumers: Vec<LifeToRhai>,
+}
+
+impl Player {
+    fn new() -> Self {
+        Self { life: 10, consumers: Vec::new() }
+    }
 }
 
 #[derive(Clone)]
@@ -105,8 +113,8 @@ impl PlayerProxy {
 // response load/save event at all. And only global and scope variables are saved.
 // load/save <([{
 fn load(json: &String) -> Rhai {
-    let mut rhai = Rhai::new(SCRIPT);
-    let mut player = Player { life: 10, consumers: Vec::new() };
+    let mut rhai = Rhai::new(TEAM);
+    let mut player = Player::new();
     let v: Vec<(String, bool, Dynamic)> = serde_json::from_str(json.as_str()).unwrap();
     for tuple in v {
         let _ = rhai.scope.remove::<Dynamic>(&tuple.0);
@@ -131,27 +139,29 @@ fn save(rhai: &Rhai) -> Result<String, Box<dyn Error>> {
     Ok(json)
 }
 
-fn scope_to_json(scope: &Scope) -> String {
+fn scope_to_json(rhai: &Rhai) -> String {
     let mut json = "".to_string();
-    for i in scope.iter() {
+    for i in rhai.scope.iter() {
         json += &serde_json::to_string(&i).unwrap();
     }
     json
 }
 
 fn compare(rhai: &Rhai) -> Rhai {
-    let before = scope_to_json(&rhai.scope);
+    let before = scope_to_json(rhai);
     let json = save(&rhai).unwrap();
     println!("before{before}");
-    println!("save{json}");
     let ret = load(&json);
-    let after = scope_to_json(&ret.scope);
+    let after = scope_to_json(&ret);
     assert_eq!(before, after);
     ret
 }
 
-fn save_then_load(rhai: Rhai) -> Result<(), Box<dyn Error>> {
+fn save_then_load() -> Result<(), Box<dyn Error>> {
     println!("---------------");
+    let mut rhai = Rhai::new(TEAM);
+    let mut player = Player::new();
+    api(&mut rhai, &mut player);
     let mut rhai = compare(&rhai);
     let _: () = rhai.call("new_member", ("bow",))?;
     let mut rhai = compare(&rhai);
@@ -202,8 +212,9 @@ fn api(rhai: &mut Rhai, player: &mut Player) {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut rhai = Rhai::new(SCRIPT);
-    let mut player = Player { life: 10, consumers: Vec::new() };
+    println!("{:?}", get_method_names());
+    let mut rhai = Rhai::new(RELIC);
+    let mut player = Player::new();
     let x = rhai.search_trait("Life");
     if x.is_some() {
         player.consumers.push(LifeToRhai(&mut rhai as *mut _));
@@ -218,7 +229,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     dbg!(&player);
-    save_then_load(rhai)?;
-    println!("{:?}", get_method_names());
+
+    save_then_load()?;
     Ok(())
 }

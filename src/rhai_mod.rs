@@ -62,7 +62,9 @@ impl Rhai {
         let ast = engine.compile(script).unwrap();
         engine.register_fn("declare_trait", declare_trait);
         let _: Dynamic = engine.eval_ast_with_scope(&mut scope, &ast).unwrap();
-        let trait_list = RHAIMGR.read().unwrap().trait_list.clone();
+        let mgr = &mut *RHAIMGR.write().unwrap();
+        let trait_list = mgr.trait_list.clone();
+        mgr.trait_list.clear();
         let script_var_cnt = scope.len() as u32;
         Self { engine, ast, scope, script_var_cnt, trait_list }
     }
