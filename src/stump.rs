@@ -25,9 +25,9 @@
 
 use std::{future::Future, sync::OnceLock};
 
-use crate::from_bevy::*;
 use crate::lock::Referee;
 use crate::to_bevy::*;
+use crate::{from_bevy::*, prelude::RhaiMgr};
 use bevy::prelude::*;
 use tokio::{
     sync::{
@@ -68,6 +68,7 @@ pub fn stump_new(mut app: App, config: Option<DeveloperBackendCallback>) -> App 
                 bevy_start_notification: Notify::new(),
                 task_chan: TaskChannel::new(s, r),
                 referee: Referee::new(),
+                rhai_manager: RhaiMgr::new(),
             })
             .unwrap();
     }
@@ -121,6 +122,8 @@ pub struct Stump {
     pub(crate) task_chan: TaskChannel,
 
     pub referee: Referee,
+
+    pub rhai_manager: RhaiMgr,
 }
 
 impl Stump {

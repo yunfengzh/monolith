@@ -3,7 +3,9 @@
 // <([{
 use std::error::Error;
 
-use monolith_macro_utils::{RhaiMap, analyze_trait_methods};
+use ::serde::{Deserialize, Serialize};
+use bevy::app::App;
+use monolith_macro_utils::analyze_trait_methods;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use rhai::*;
 use yunfengzh_monolith::prelude::*;
@@ -49,10 +51,16 @@ const TEAM: &str = r#"
 "#;
 // }])>
 
-#[derive(Clone, Debug, RhaiMap)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Hurt {
     critical_attack: i64,
     state: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Damage {
+    critical_attack: i64,
+    msg: String,
 }
 
 // Rhai to Player <([{
@@ -88,7 +96,7 @@ impl PlayerProxy {
         let proxy: PlayerProxy = player.into();
         rhai.engine.register_fn("adjust", PlayerProxy::adjust);
         rhai.engine.register_fn("set", PlayerProxy::set);
-        rhai.scope.push("player", proxy);
+        rhai.scope.as_mut().unwrap().push("player", proxy);
     }
 
     pub fn adjust(&mut self, value: i64) {
@@ -132,14 +140,7 @@ fn load(json: &String) -> Rhai {
     let mut rhai = Rhai::new(TEAM);
     let mut player = Player::new();
     let v: Vec<(String, bool, Dynamic)> = serde_json::from_str(json.as_str()).unwrap();
-    for tuple in v {
-        let _ = rhai.scope.remove::<Dynamic>(&tuple.0);
-        if tuple.1 {
-            rhai.scope.push_constant_dynamic(tuple.0, tuple.2);
-        } else {
-            rhai.scope.push_dynamic(tuple.0, tuple.2);
-        }
-    }
+    rhai.load(v);
     api(&mut rhai, &mut player);
     rhai
 }
@@ -196,7 +197,7 @@ enum Status {
 }
 
 fn register_rust_enum(rhai: &mut Rhai) {
-    rhai.scope.push_constant("Status_Some", <Status as Into<u32>>::into(Status::Some));
+    rhai.scope.as_mut().unwrap().push_constant("Status_Some", <Status as Into<u32>>::into(Status::Some));
 }
 // }])>
 
@@ -206,6 +207,8 @@ fn api(rhai: &mut Rhai, player: &mut Player) {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let mut app = App::new();
+    app = stump_new(app, None);
     println!("{:?}", get_method_names());
     let mut rhai = Rhai::new(RELIC);
     let mut player = Player::new();
@@ -219,5 +222,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     dbg!(&player);
 
     save_then_load()?;
+    stump_drop();
     Ok(())
 }
