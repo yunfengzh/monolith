@@ -5,7 +5,7 @@ use std::error::Error;
 
 use ::serde::{Deserialize, Serialize};
 use bevy::app::App;
-use monolith_macro_utils::analyze_trait_methods;
+use monolith_macro_utils::trait_to_rhai;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use rhai::*;
 use yunfengzh_monolith::prelude::*;
@@ -57,9 +57,9 @@ struct Hurt {
     state: String,
 }
 
-#[derive(Serialize, Deserialize)]
-struct Damage {
-    critical_attack: i64,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Revive {
+    state: i64,
     msg: String,
 }
 
@@ -76,31 +76,23 @@ impl Player {
     }
 }
 
+// It is developer's responsibility to make player-pointer available. Feel free to PlayerProxy(Arc<..>);
 #[derive(Clone)]
-struct PlayerProxy(usize);
+struct PlayerProxy(*mut Player);
 
-impl From<&mut Player> for PlayerProxy {
-    fn from(p: &mut Player) -> Self {
-        Self((p as *mut Player).expose_provenance())
-    }
-}
-
-impl AsMut<Player> for PlayerProxy {
-    fn as_mut(&mut self) -> &mut Player {
-        unsafe { &mut *std::ptr::with_exposed_provenance_mut(self.0) }
-    }
-}
+unsafe impl Send for PlayerProxy {}
+unsafe impl Sync for PlayerProxy {}
 
 impl PlayerProxy {
     fn proxy(rhai: &mut Rhai, player: &mut Player) {
-        let proxy: PlayerProxy = player.into();
+        let proxy: PlayerProxy = PlayerProxy(player as *mut _);
         rhai.engine.register_fn("adjust", PlayerProxy::adjust);
         rhai.engine.register_fn("set", PlayerProxy::set);
         rhai.scope.as_mut().unwrap().push("player", proxy);
     }
 
     pub fn adjust(&mut self, value: i64) {
-        let player: &mut Player = self.as_mut();
+        let player: &mut Player = unsafe { &mut *self.0 };
         player.life += value as i32;
         if player.life <= 0 {
             for i in player.consumers.iter() {
@@ -113,41 +105,39 @@ impl PlayerProxy {
     pub fn set(&mut self, mut value: i64) {
         // Always double-check input from an untrusted script.
         value = value.clamp(1, 20);
-        let player: &mut Player = self.as_mut();
+        let player: &mut Player = unsafe { &mut *self.0 };
         player.life = value as i32;
     }
 }
 // }])>
 
 // Player to rhai <([{
-#[analyze_trait_methods]
+#[trait_to_rhai]
 trait Life {
-    fn on_player_die(&self, evt: Hurt, cnt: i64) -> Dynamic;
+    fn on_player_die(&self, evt: Hurt, cnt: i64) -> Revive;
 
     fn on_player_up(&self, cnt: i64);
     fn on_player_revive(&self) -> Hurt;
-}
-
-pub fn get_method_names() -> Vec<String> {
-    vec!["on_player_die".to_string()]
 }
 // }])>
 
 // The function shows how to load/save a rhai instance. During the process, MOD developer need not
 // response load/save event at all. And only global and scope variables are saved.
 // load/save <([{
-fn load(json: &String) -> Rhai {
-    let mut rhai = Rhai::new(TEAM);
+fn load(json: &String) {
+    let rhai_raw = stump().rhai_manager.get_rhai("team");
+    let mut rhai = unsafe { &mut *rhai_raw };
     let mut player = Player::new();
     let v: Vec<(String, bool, Dynamic)> = serde_json::from_str(json.as_str()).unwrap();
     rhai.load(v);
     api(&mut rhai, &mut player);
-    rhai
 }
 
-fn save(rhai: &Rhai) -> Result<String, Box<dyn Error>> {
+fn save() -> Result<String, Box<dyn Error>> {
+    let rhai_raw = stump().rhai_manager.get_rhai("team");
+    let rhai = unsafe { &mut *rhai_raw };
     let mut json = "[".to_string();
-    for i in rhai.iter() {
+    for i in rhai.iter_script_vars() {
         json += &serde_json::to_string(&i)?;
         json += ",";
     }
@@ -156,34 +146,36 @@ fn save(rhai: &Rhai) -> Result<String, Box<dyn Error>> {
     Ok(json)
 }
 
-fn scope_to_json(rhai: &Rhai) -> String {
+fn scope_to_json() -> String {
+    let rhai_raw = stump().rhai_manager.get_rhai("team");
+    let rhai = unsafe { &mut *rhai_raw };
     let mut json = "".to_string();
-    for i in rhai.scope.iter() {
+    for i in rhai.iter_all_vars() {
         json += &serde_json::to_string(&i).unwrap();
     }
     json
 }
 
-fn compare(rhai: &Rhai) -> Rhai {
-    let before = scope_to_json(rhai);
-    let json = save(&rhai).unwrap();
-    println!("before{before}");
-    let ret = load(&json);
-    let after = scope_to_json(&ret);
+fn compare() {
+    let before = scope_to_json();
+    let json = save().unwrap();
+    println!("compare: {before}");
+    load(&json);
+    let after = scope_to_json();
     assert_eq!(before, after);
-    ret
 }
 
 fn save_then_load() -> Result<(), Box<dyn Error>> {
     println!("---------------");
-    let mut rhai = Rhai::new(TEAM);
+    let rhai_raw = stump().rhai_manager.get_rhai("team");
+    let mut rhai = unsafe { &mut *rhai_raw };
     let mut player = Player::new();
     api(&mut rhai, &mut player);
-    let mut rhai = compare(&rhai);
+    compare();
     let _: () = rhai.call("new_member", ("bow",))?;
-    let mut rhai = compare(&rhai);
+    compare();
     let _: () = rhai.call("new_member", ("sword",))?;
-    let _ = compare(&rhai);
+    compare();
     Ok(())
 }
 // }])>
@@ -206,19 +198,25 @@ fn api(rhai: &mut Rhai, player: &mut Player) {
     register_rust_enum(rhai);
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let mut app = App::new();
-    app = stump_new(app, None);
-    println!("{:?}", get_method_names());
-    let mut rhai = Rhai::new(RELIC);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let app = App::new();
+    _ = stump_new(app, None);
+    let rhai_raw = stump().rhai_manager.new_rhai("relic", RELIC);
+    stump().rhai_manager.new_rhai("team", TEAM);
+    stump().rhai_manager.init_done();
+
+    let mut rhai = unsafe { &mut *rhai_raw };
+    let rhai_call = unsafe { &mut *rhai_raw };
     let mut player = Player::new();
     let x = rhai.search_trait("Life");
     if x.is_some() {
-        player.consumers.push(LifeToRhai(&mut rhai as *mut _));
+        player.consumers.push(LifeToRhai(rhai_raw));
     }
     api(&mut rhai, &mut player);
     dbg!(&player);
-    let _: i64 = rhai.call("fight", ())?;
+    let _unused = rhai.lock().await;
+    let _: i64 = rhai_call.call("fight", ())?;
     dbg!(&player);
 
     save_then_load()?;

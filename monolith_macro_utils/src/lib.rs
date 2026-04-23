@@ -206,51 +206,46 @@ pub fn payload_to_attachment(input: TokenStream) -> TokenStream {
 // }])>
 
 // collect trait method <([{
-/// 属性宏：分析 Trait 方法的参数
+/// TODO: 属性宏：分析 Trait 方法的参数
 #[proc_macro_attribute]
-pub fn analyze_trait_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    // 1. 将输入的 TokenStream 解析为 Trait 的语法树
+pub fn trait_to_rhai(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_trait = parse_macro_input!(item as ItemTrait);
 
-    // 获取 Trait 的名称
     let trait_name = &input_trait.ident;
 
     let struct_name = quote::format_ident!("{}ToRhai", trait_name);
     let mut method_impls = Vec::new();
 
-    // 2. 遍历 Trait 中的所有项（我们只关心方法）
+    // iterator all methods of Trait
     for item in &input_trait.items {
         if let TraitItem::Fn(method) = item {
             let method_name = &method.sig.ident;
-            println!("  ├─ 📝 方法: {}", method_name);
-            let method_inputs = &method.sig.inputs; // 参数列表
-            let method_output = &method.sig.output; // 返回值类型
+            println!("method: {}", method_name);
+            let method_inputs = &method.sig.inputs;
+            let method_output = &method.sig.output;
 
             let mut params = Vec::new();
             let mut vcp = Vec::new();
 
-            // 3. 遍历方法的参数
+            // iterator all params of a method
             for input in &method.sig.inputs {
                 match input {
-                    // 忽略 &self, self 等接收者
+                    // ignore &self, self etc
                     FnArg::Receiver(_) => continue,
 
                     FnArg::Typed(PatType { pat, ty, .. }) => {
-                        // 获取参数名 (将 pat: i32 中的 pat 转为字符串)
                         let arg_name = quote!(#pat).to_string();
                         let param_name = match &**pat {
                             Pat::Ident(pat_ident) => &pat_ident.ident,
-                            _ => continue, // 忽略复杂模式
+                            _ => continue,
                         };
 
-                        // 获取类型
                         let type_str = quote!(#ty).to_string();
 
-                        // 判断是否为 Struct
                         let is_struct = is_likely_struct(ty.as_ref());
-                        let struct_flag = if is_struct { "✅ 是" } else { "❌ 否" };
+                        let struct_flag = if is_struct { "yes" } else { "no" };
 
-                        println!("  │   ├─ 参数: {:<15} 类型: {:<20} 是否Struct: {}", arg_name, type_str, struct_flag);
+                        println!("  param: {:<15} type: {:<20} is struct: {}", arg_name, type_str, struct_flag);
                         if is_struct {
                             let line = quote! {
                                 let #param_name: Dynamic = rhai::serde::to_dynamic(#param_name).unwrap();
@@ -268,23 +263,20 @@ pub fn analyze_trait_methods(_attr: TokenStream, item: TokenStream) -> TokenStre
                 fn #method_name(#method_inputs) #method_output {
                     let rhai = unsafe { &mut *self.0 };
                     #(#params)*
-                    rhai.call(stringify!(#method_name), (#(#vcp)*)).unwrap()
+                    let ret: Dynamic = rhai.call(stringify!(#method_name), (#(#vcp)*)).unwrap();
+                    rhai::serde::from_dynamic(&ret).unwrap()
                 }
             };
             method_impls.push(impl_code);
         }
     }
 
-    // 4. 返回原始代码，确保代码能正常编译
-    // 如果这里不返回原始代码，Trait 定义就会丢失
     quote! {
         #input_trait
 
-        // 生成新的结构体
         #[derive(Debug, Clone)]
         pub struct #struct_name(*mut Rhai);
 
-        // 为该结构体实现 trait
         impl #trait_name for #struct_name {
             #(#method_impls)*
         }
@@ -322,13 +314,6 @@ fn is_likely_struct(ty: &Type) -> bool {
         Type::Reference(type_ref) => {
             // 递归检查引用的内部类型
             is_likely_struct(&type_ref.elem)
-        }
-
-        // 情况 C: 智能指针，如 Box<MyStruct> 或 Arc<MyStruct>
-        Type::Path(_) => {
-            // 这里可以扩展逻辑去解析泛型参数，例如提取 Box<T> 中的 T
-            // 为了简化，这里暂时不处理复杂的泛型嵌套
-            false
         }
 
         _ => false,
