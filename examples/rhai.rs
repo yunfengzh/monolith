@@ -11,7 +11,9 @@ use rhai::*;
 use yunfengzh_monolith::prelude::*;
 // }])>
 
-// SCRIPT <([{
+// Two scripts are provided, RELIC demostrates the basic usage of a script. TEAM shows how to
+// load/save a script.
+// sample scripts <([{
 const RELIC: &str = r#"
     let relic = #{
         count: 1,
@@ -51,6 +53,7 @@ const TEAM: &str = r#"
 "#;
 // }])>
 
+// structs shared between rust and rhai, doc them to rhai developer <([{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Hurt {
     critical_attack: i64,
@@ -62,8 +65,22 @@ struct Revive {
     state: i64,
     msg: String,
 }
+// }])>
 
-// Rhai to Player <([{
+// import enum to rhai <([{
+#[derive(Clone, TryFromPrimitive, IntoPrimitive)]
+#[repr(u32)]
+enum Status {
+    None = 0,
+    Some = 100,
+}
+
+fn register_rust_enum(rhai: &mut Rhai) {
+    rhai.scope.as_mut().unwrap().push_constant("Status_Some", <Status as Into<u32>>::into(Status::Some));
+}
+// }])>
+
+// Rhai to rust <([{
 #[derive(Clone, Debug)]
 struct Player {
     pub life: i32,
@@ -76,7 +93,9 @@ impl Player {
     }
 }
 
-// It is developer's responsibility to make player-pointer available. Feel free to PlayerProxy(Arc<..>);
+// Here we can make sure player raw pointer available. Alternative is 'PlayerProxy(Arc<..>);'
+// Don't  worry, untrusted script can't access PlayerProxy inner field because we don't expose
+// PlayerProxy::set/get methods.
 #[derive(Clone)]
 struct PlayerProxy(*mut Player);
 
@@ -91,8 +110,10 @@ impl PlayerProxy {
         rhai.scope.as_mut().unwrap().push("player", proxy);
     }
 
-    pub fn adjust(&mut self, value: i64) {
+    pub fn adjust(&mut self, mut value: i64) {
         let player: &mut Player = unsafe { &mut *self.0 };
+        // Always double-check input from an untrusted script.
+        value = value.clamp(-20, -1);
         player.life += value as i32;
         if player.life <= 0 {
             for i in player.consumers.iter() {
@@ -109,9 +130,14 @@ impl PlayerProxy {
         player.life = value as i32;
     }
 }
+
+fn api(rhai: &mut Rhai, player: &mut Player) {
+    PlayerProxy::proxy(rhai, player);
+    register_rust_enum(rhai);
+}
 // }])>
 
-// Player to rhai <([{
+// Rust to rhai <([{
 #[trait_to_rhai]
 trait Life {
     fn on_player_die(&self, evt: Hurt, cnt: i64) -> Revive;
@@ -121,22 +147,24 @@ trait Life {
 }
 // }])>
 
-// The function shows how to load/save a rhai instance. During the process, MOD developer need not
-// response load/save event at all. And only global and scope variables are saved.
 // load/save <([{
-fn load(json: &String) {
+async fn load(json: &String) {
     let rhai_raw = stump().rhai_manager.get_rhai("team");
+    let rhai_lock = unsafe { &mut *rhai_raw };
     let mut rhai = unsafe { &mut *rhai_raw };
     let mut player = Player::new();
     let v: Vec<(String, bool, Dynamic)> = serde_json::from_str(json.as_str()).unwrap();
+    let _unused = rhai_lock.toplevel_lock().await;
     rhai.load(v);
     api(&mut rhai, &mut player);
 }
 
-fn save() -> Result<String, Box<dyn Error>> {
+async fn save() -> Result<String, Box<dyn Error>> {
     let rhai_raw = stump().rhai_manager.get_rhai("team");
+    let rhai_lock = unsafe { &mut *rhai_raw };
     let rhai = unsafe { &mut *rhai_raw };
     let mut json = "[".to_string();
+    let _unused = rhai_lock.toplevel_lock().await;
     for i in rhai.iter_script_vars() {
         json += &serde_json::to_string(&i)?;
         json += ",";
@@ -156,47 +184,29 @@ fn scope_to_json() -> String {
     json
 }
 
-fn compare() {
+async fn compare() {
     let before = scope_to_json();
-    let json = save().unwrap();
+    let json = save().await.unwrap();
     println!("compare: {before}");
-    load(&json);
+    load(&json).await;
     let after = scope_to_json();
     assert_eq!(before, after);
 }
 
-fn save_then_load() -> Result<(), Box<dyn Error>> {
+async fn save_then_load() -> Result<(), Box<dyn Error>> {
     println!("---------------");
     let rhai_raw = stump().rhai_manager.get_rhai("team");
     let mut rhai = unsafe { &mut *rhai_raw };
     let mut player = Player::new();
     api(&mut rhai, &mut player);
-    compare();
+    compare().await;
     let _: () = rhai.call("new_member", ("bow",))?;
-    compare();
+    compare().await;
     let _: () = rhai.call("new_member", ("sword",))?;
-    compare();
+    compare().await;
     Ok(())
 }
 // }])>
-
-// enum <([{
-#[derive(Clone, TryFromPrimitive, IntoPrimitive)]
-#[repr(u32)]
-enum Status {
-    None = 0,
-    Some = 100,
-}
-
-fn register_rust_enum(rhai: &mut Rhai) {
-    rhai.scope.as_mut().unwrap().push_constant("Status_Some", <Status as Into<u32>>::into(Status::Some));
-}
-// }])>
-
-fn api(rhai: &mut Rhai, player: &mut Player) {
-    PlayerProxy::proxy(rhai, player);
-    register_rust_enum(rhai);
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -206,8 +216,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     stump().rhai_manager.new_rhai("team", TEAM);
     stump().rhai_manager.init_done();
 
+    let rhai_lock = unsafe { &mut *rhai_raw };
     let mut rhai = unsafe { &mut *rhai_raw };
-    let rhai_call = unsafe { &mut *rhai_raw };
     let mut player = Player::new();
     let x = rhai.search_trait("Life");
     if x.is_some() {
@@ -215,11 +225,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     api(&mut rhai, &mut player);
     dbg!(&player);
-    let _unused = rhai.lock().await;
-    let _: i64 = rhai_call.call("fight", ())?;
+    let _unused = rhai_lock.toplevel_lock().await;
+    let _: i64 = rhai.call("fight", ())?;
     dbg!(&player);
 
-    save_then_load()?;
+    save_then_load().await?;
     stump_drop();
     Ok(())
 }

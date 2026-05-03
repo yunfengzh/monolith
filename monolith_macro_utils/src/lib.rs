@@ -205,8 +205,11 @@ pub fn payload_to_attachment(input: TokenStream) -> TokenStream {
 }
 // }])>
 
-// collect trait method <([{
-/// TODO: 属性宏：分析 Trait 方法的参数
+// trait_to_rhai <([{
+/// The procmacro works on a trait defined by rust and implemented by rhai, so rust can inject
+/// event into rhai. It achieves it by adding a 'TraitNameToRhai(*mut Rhai)' struct and implements
+/// all trait methods which redirect method params into rhai script. It holds a Rhai raw pointer,
+/// see [`crate::rhai_mod`] for memory safety.
 #[proc_macro_attribute]
 pub fn trait_to_rhai(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_trait = parse_macro_input!(item as ItemTrait);
@@ -220,6 +223,7 @@ pub fn trait_to_rhai(_attr: TokenStream, item: TokenStream) -> TokenStream {
     for item in &input_trait.items {
         if let TraitItem::Fn(method) = item {
             let method_name = &method.sig.ident;
+            // TODO: remove println?
             println!("method: {}", method_name);
             let method_inputs = &method.sig.inputs;
             let method_output = &method.sig.output;
@@ -258,7 +262,7 @@ pub fn trait_to_rhai(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
 
-            // rhai.call("on_player_die", (m, cnt)).unwrap()
+            // TODO: rhai.call("on_player_die", (m, cnt)).unwrap()
             let impl_code = quote! {
                 fn #method_name(#method_inputs) #method_output {
                     let rhai = unsafe { &mut *self.0 };
@@ -284,25 +288,19 @@ pub fn trait_to_rhai(_attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
-/// 辅助函数：判断一个类型是否“看起来像”一个 Struct
 fn is_likely_struct(ty: &Type) -> bool {
     match ty {
-        // 情况 A: 简单路径类型，如 MyStruct
         Type::Path(type_path) => {
             let path = &type_path.path;
 
-            // 如果是单段路径（没有 ::）
             if path.segments.len() == 1 {
                 let ident = &path.segments.first().unwrap().ident;
                 let name = ident.to_string();
 
-                // 排除 Rust 基本类型
                 if is_primitive_type(&name) {
                     return false;
                 }
 
-                // 启发式规则：Rust 中 Struct/Enum 通常首字母大写
-                // 这是一个常见的约定，虽然不是 100% 准确
                 if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
                     return true;
                 }
@@ -310,17 +308,12 @@ fn is_likely_struct(ty: &Type) -> bool {
             false
         }
 
-        // 情况 B: 引用类型，如 &MyStruct
-        Type::Reference(type_ref) => {
-            // 递归检查引用的内部类型
-            is_likely_struct(&type_ref.elem)
-        }
+        Type::Reference(type_ref) => is_likely_struct(&type_ref.elem),
 
         _ => false,
     }
 }
 
-/// 排除基本类型
 fn is_primitive_type(name: &str) -> bool {
     matches!(
         name,

@@ -1,17 +1,61 @@
 // vim: foldmarker=<([{,}])> foldmethod=marker
 
 // Module level Doc <([{
-//! Memory model: Application should calls later at the begin of it
-//!   1. [RhaiMgr::new_rhai] multiple times
-//!   2. [RhaiMgr::init_done]
-//! which makes all [Rhai] instances has a static lifetime even player uses LOAD to switch a game
-//! context to another. And trait_to_rhai proc-macro can safely save '*mut Rhai' to its generated
-//! objects. The only defect is player need restart his game when a MOD is added/removed.
+//! A MOD architecture based on https://rhai.rs/. The module encapsulates rhai into [RhaiMgr] and
+//! [Rhai]. Later use rust to represent application side, rhai to represent rhai script. Rhai
+//! script is treated as untrusted script.
 //!
-//! Rust to rhai: by trait_to_rhai macro.
-//! Rhai to rust: by API, grouped by objs (system vars).
+//! ## Memory Model
 //!
-//! Rhai script has two kinds of vars: one is called script var, another is system-level var.
+//! Application should follow later steps at init stage
+//!
+//! 1. [RhaiMgr::new_rhai] to get Rhai pointer.
+//! 2. in script, calls [Rhai::declare_trait] to register supported traits.
+//! 3. repeat steps 1 and 2 until all scripts are loaded.
+//! 4. [RhaiMgr::init_done], the method also closes step 1 and step 2 forever.
+//!
+//! the model makes all [Rhai] instances has a static lifetime even player uses LOAD to switch a
+//! game context to another. And trait_to_rhai proc-macro can safely save '*mut Rhai' to its
+//! generated objects. The only defect is player need restart his game when a MOD is added/removed.
+//!
+//! ## Flow between Rust and Rhai
+//!
+//! To achieve control from rust to rhai
+//!
+//! 1. rust need define some traits for rhai to implement, by these traits, rust can inject events
+//!    etc to rhai.
+//! 2. Script need call [Rhai::declare_trait] to declare which traits are supported in its global
+//!    statements. It is a system function only available when a Rhai instance is setup. It's
+//!    advised that global statements only include `declare_trait(...)` and script vars.
+//! 3. proc-macro [trait_to_rhai] for automatically generate code from rust to rhai.
+//!
+//! To achieve control from rhai to rust
+//!
+//! 1. Typically, it's called API by [Engine::register_fn], but I recommend group them by
+//! obj by [Scope::push].
+//! 2. You can also define a proxy var to make rhai access rust inner var. Don't worry, if there
+//!    isn't Proxy::set/get method, the inner field of proxy var can't be accessed by rhai script.
+//!
+//! These vars are called system vars.
+//!
+//! ## Share data between rust and rhai
+//!
+//! In fact, shared data is also the part of a protocol or API. That is, you need doc the struct of
+//! the data then the struct with `#derive[Serialize, Deserialize]`, rhai will do the remain
+//! translation.
+//!
+//! ## Load/Save Script
+//!
+//! 1. To save script vars, [Rhai::iter_script_vars].
+//! 2. To load script vars, [Rhai::load].
+//! 3. It's up to you to decide how to save system vars.
+//!
+//! ## [Rhai::toplevel_lock]
+//! When application calls rhai function/method initiatively or load/save, it must calls
+//! [Rhai::toplevel_lock] to prevent potential race on Rhai. [Rhai::lock] can't be placed into
+//! [Rhai::call] due to rhai maybe tries to call [Rhai::call] in API then lead to deadlock.
+//!
+//! `example/rhai.rs` is the best way to start.
 
 use std::collections::HashMap;
 
@@ -40,7 +84,7 @@ impl<'a, A: Iterator<Item = (&'a str, bool, Dynamic)>> Iterator for RhaiIter<A> 
 #[derive(Debug)]
 pub struct RhaiMgr {
     data: HashMap<String, Rhai>,
-    trait_list: Option<HashMap<String, String>>, // TODO: the field is Rhai::trait_list, class var
+    trait_list: Option<HashMap<String, String>>,
     init_stage: bool,
 }
 
@@ -72,7 +116,7 @@ impl RhaiMgr {
 
 #[derive(Debug)]
 pub struct Rhai {
-    lock: Mutex<()>, // TODO: name
+    lock: Mutex<()>,
     pub engine: Engine,
     ast: AST,
     pub scope: Option<Scope<'static>>,
@@ -96,9 +140,7 @@ impl Rhai {
         Self { lock: Mutex::new(()), engine, ast, scope: Some(scope), script_var_cnt, trait_list }
     }
 
-    /// TODO: be used to sync all requests from game. Rhai::call can be called from script
-    /// internally.
-    pub async fn lock(&mut self) -> MutexGuard<'_, ()> {
+    pub async fn toplevel_lock(&mut self) -> MutexGuard<'_, ()> {
         self.lock.lock().await
     }
 

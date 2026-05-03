@@ -145,7 +145,6 @@ impl Foreend {
         unsafe { std::mem::transmute::<&'_ mut ButtonBackend, &'_ mut ButtonBackend>(ret) }
     }
 
-    // TODO: automatically free.
     pub fn create_user_backend(&self) -> UnboundedSender<GameEvent> {
         self.sender.clone()
     }
@@ -299,6 +298,7 @@ fn button_callback(mut interaction_query: Query<(&Interaction, Entity), (Changed
 
 // deleveloper backend <([{
 pub type DeveloperBackendSender = UnboundedSender<(usize, GameEvent)>;
+// TODO: currently, rust doesn't support async fn type.
 pub(crate) type DeveloperBackendCallback = fn(&String) -> bool;
 
 /// DeveloperBackend reuses current console as a debug console to observe inner variables, inject
