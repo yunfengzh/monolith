@@ -11,6 +11,7 @@ use rhai::*;
 use yunfengzh_monolith::prelude::*;
 // }])>
 
+// TODO: new sample, a script send message to b script, by rust message-system (athlete).
 // Two scripts are provided, RELIC demostrates the basic usage of a script. TEAM shows how to
 // load/save a script.
 // sample scripts <([{

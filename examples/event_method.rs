@@ -109,6 +109,7 @@ impl ScriptEventSystem {
         let binding = my_handler.unwrap();
         let opj: FnPtr = binding.get(method_name).unwrap().clone_cast();
         let result: bool = opj.call(&self.engine, &self.ast, (event_map,))?;
+        // TODO: FnPtr::call_as_method
         // use rhai::NativeCallContext;
         // let result: bool =
         //     opj.call_raw(&NativeCallContext::new(&self.engine, method_name), my_handler, (event_map,))?;
