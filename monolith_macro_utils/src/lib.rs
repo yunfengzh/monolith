@@ -267,6 +267,8 @@ pub fn trait_to_rhai(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 fn #method_name(#method_inputs) #method_output {
                     let rhai = unsafe { &mut *self.0 };
                     #(#params)*
+                    // TODO: use new rhai.call_method()
+                    let obj = rhai.search_impl_er(stringify!(#trait_name)).unwrap();
                     let ret: Dynamic = rhai.call(stringify!(#method_name), (#(#vcp)*)).unwrap();
                     rhai::serde::from_dynamic(&ret).unwrap()
                 }

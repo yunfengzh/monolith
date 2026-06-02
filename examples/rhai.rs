@@ -18,13 +18,25 @@ use yunfengzh_monolith::prelude::*;
 const RELIC: &str = r#"
     let relic = #{
         count: 1,
-    };
+
+        on_player_die: |evt, cnt| {
+            print(`rhai event handler: Player ${evt}, ${cnt}`);
+            if this.count > 0 {
+                this.count -= 1;
+                // TODO: init all rust vars before evaluate the script!
+                // player.set(3);
+                return #{state: 1, msg: "revive done"};
+            } else {
+                return #{state: 0, msg: "No more reserve"};
+            }
+        }
+   };
 
     print("script eval ${Status_Some}");
     declare_trait("relic", "Life");
 
     fn on_player_die(evt, cnt) {
-        print(`rhai event handler: Player ${evt}, ${cnt}`);
+        print(`rhai call event handler: Player ${evt}, ${cnt}`);
         if relic.count > 0 {
             relic.count -= 1;
             player.set(3);
@@ -132,8 +144,10 @@ impl PlayerProxy {
     }
 }
 
-fn api(rhai: &mut Rhai, player: &mut Player) {
+fn api_or_proxy(rhai: &mut Rhai, player: &mut Player) {
+    // Make rust object accessed by untrusted-script -- by proxy.
     PlayerProxy::proxy(rhai, player);
+    // TODO: More such as web.channel -- an rust object open a connection for game server.
     register_rust_enum(rhai);
 }
 // }])>
@@ -156,8 +170,8 @@ async fn load(json: &String) {
     let mut player = Player::new();
     let v: Vec<(String, bool, Dynamic)> = serde_json::from_str(json.as_str()).unwrap();
     let _unused = rhai_lock.toplevel_lock().await;
-    rhai.load(v);
-    api(&mut rhai, &mut player);
+    rhai.load_script_vars(v);
+    api_or_proxy(&mut rhai, &mut player);
 }
 
 async fn save() -> Result<String, Box<dyn Error>> {
@@ -199,7 +213,7 @@ async fn save_then_load() -> Result<(), Box<dyn Error>> {
     let rhai_raw = stump().rhai_manager.get_rhai("team");
     let mut rhai = unsafe { &mut *rhai_raw };
     let mut player = Player::new();
-    api(&mut rhai, &mut player);
+    api_or_proxy(&mut rhai, &mut player);
     compare().await;
     let _: () = rhai.call("new_member", ("bow",))?;
     compare().await;
@@ -220,11 +234,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let rhai_lock = unsafe { &mut *rhai_raw };
     let mut rhai = unsafe { &mut *rhai_raw };
     let mut player = Player::new();
-    let x = rhai.search_trait("Life");
+    let x = rhai.search_impl_er("Life");
     if x.is_some() {
         player.consumers.push(LifeToRhai(rhai_raw));
     }
-    api(&mut rhai, &mut player);
+    api_or_proxy(&mut rhai, &mut player);
     dbg!(&player);
     let _unused = rhai_lock.toplevel_lock().await;
     let _: i64 = rhai.call("fight", ())?;

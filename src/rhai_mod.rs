@@ -108,10 +108,6 @@ impl RhaiMgr {
     pub fn get_rhai(&mut self, title: &str) -> *mut Rhai {
         self.data.get_mut(title).unwrap() as *mut _
     }
-
-    pub fn load_rhai(&mut self, title: &str, v: Vec<(String, bool, Dynamic)>) {
-        self.data.get_mut(title).unwrap().load(v);
-    }
 }
 
 #[derive(Debug)]
@@ -140,6 +136,8 @@ impl Rhai {
         Self { lock: Mutex::new(()), engine, ast, scope: Some(scope), script_var_cnt, trait_list }
     }
 
+    /// toplevel_lock() is used by rust to launch a request to a script initiatively, or load/save
+    /// context.
     pub async fn toplevel_lock(&mut self) -> MutexGuard<'_, ()> {
         self.lock.lock().await
     }
@@ -148,7 +146,7 @@ impl Rhai {
         stump().rhai_manager.trait_list.as_mut().unwrap().insert(trait_name, obj);
     }
 
-    pub fn load(&mut self, v: Vec<(String, bool, Dynamic)>) {
+    pub fn load_script_vars(&mut self, v: Vec<(String, bool, Dynamic)>) {
         self.scope.take();
         self.scope = Some(Scope::new());
         let scope = self.scope.as_mut().unwrap();
@@ -169,8 +167,22 @@ impl Rhai {
         self.scope.as_ref().unwrap().iter()
     }
 
-    pub fn search_trait(&self, trait_name: &str) -> Option<&String> {
+    pub fn search_impl_er(&self, trait_name: &str) -> Option<&String> {
         self.trait_list.get(trait_name)
+    }
+
+    pub fn call_method<T: Clone + 'static + Send + Sync>(
+        &mut self,
+        obj: impl AsRef<str>,
+        method: impl AsRef<str>,
+        args: impl FuncArgs,
+    ) -> Result<T, Box<EvalAltResult>> {
+        let scope = self.scope.as_mut().unwrap();
+        let scope2: &mut Scope<'static> = unsafe { &mut *(scope as *mut _) };
+        let value = scope.get_value_mut::<Map>(obj.as_ref()).unwrap();
+        let obj = scope2.get_mut(obj.as_ref()).unwrap();
+        let om: FnPtr = value.get(method.as_ref()).unwrap().clone_cast();
+        om.call_as_method(&self.engine, &self.ast, obj, args)
     }
 
     pub fn call<T: Clone + 'static + Send + Sync>(
