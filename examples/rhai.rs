@@ -24,7 +24,7 @@ const RELIC: &str = r#"
             if this.count > 0 {
                 this.count -= 1;
                 // TODO: init all rust vars before evaluate the script!
-                // player.set(3);
+                player.set(3);
                 return #{state: 1, msg: "revive done"};
             } else {
                 return #{state: 0, msg: "No more reserve"};
@@ -167,11 +167,12 @@ async fn load(json: &String) {
     let rhai_raw = stump().rhai_manager.get_rhai("team");
     let rhai_lock = unsafe { &mut *rhai_raw };
     let mut rhai = unsafe { &mut *rhai_raw };
+    rhai.load_init();
     let mut player = Player::new();
+    api_or_proxy(&mut rhai, &mut player);
     let v: Vec<(String, bool, Dynamic)> = serde_json::from_str(json.as_str()).unwrap();
     let _unused = rhai_lock.toplevel_lock().await;
     rhai.load_script_vars(v);
-    api_or_proxy(&mut rhai, &mut player);
 }
 
 async fn save() -> Result<String, Box<dyn Error>> {
@@ -211,15 +212,22 @@ async fn compare() {
 async fn save_then_load() -> Result<(), Box<dyn Error>> {
     println!("---------------");
     let rhai_raw = stump().rhai_manager.get_rhai("team");
-    let mut rhai = unsafe { &mut *rhai_raw };
-    let mut player = Player::new();
-    api_or_proxy(&mut rhai, &mut player);
+    let rhai = unsafe { &mut *rhai_raw };
     compare().await;
     let _: () = rhai.call("new_member", ("bow",))?;
     compare().await;
     let _: () = rhai.call("new_member", ("sword",))?;
     compare().await;
     Ok(())
+}
+
+fn team_init() {
+    println!("----team init-----------");
+    let rhai_raw = stump().rhai_manager.new_rhai("team", TEAM);
+    let mut rhai = unsafe { &mut *rhai_raw };
+    let mut player = Player::new();
+    api_or_proxy(&mut rhai, &mut player);
+    rhai.eval_script();
 }
 // }])>
 
@@ -232,7 +240,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut player = Player::new();
     api_or_proxy(&mut rhai, &mut player);
     rhai.eval_script();
-    stump().rhai_manager.new_rhai("team", TEAM);
+    team_init();
     stump().rhai_manager.init_done();
 
     let rhai_lock = unsafe { &mut *rhai_raw };
@@ -247,7 +255,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _unused = rhai_lock.toplevel_lock().await;
     let _: i64 = rhai.call("fight", ())?;
     dbg!(&player);
-    return Ok(());
 
     save_then_load().await?;
     stump_drop();

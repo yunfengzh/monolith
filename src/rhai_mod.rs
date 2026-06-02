@@ -84,6 +84,7 @@ impl<'a, A: Iterator<Item = (&'a str, bool, Dynamic)>> Iterator for RhaiIter<A> 
 #[derive(Debug)]
 pub struct RhaiMgr {
     data: HashMap<String, Rhai>,
+    // TODO: remove Optino?
     trait_list: Option<HashMap<String, String>>,
     init_stage: bool,
 }
@@ -115,6 +116,7 @@ pub struct Rhai {
     lock: Mutex<()>,
     pub engine: Engine,
     ast: AST,
+    // TODO: remove Optino?
     pub scope: Option<Scope<'static>>,
     system_vars_range: (u32, u32),
     script_vars_range: (u32, u32),
@@ -162,9 +164,11 @@ impl Rhai {
         stump().rhai_manager.trait_list.as_mut().unwrap().insert(trait_name, obj);
     }
 
-    pub fn load_script_vars(&mut self, v: Vec<(String, bool, Dynamic)>) {
+    pub fn load_init(&mut self) {
         self.scope.take();
         self.scope = Some(Scope::new());
+    }
+    pub fn load_script_vars(&mut self, v: Vec<(String, bool, Dynamic)>) {
         let scope = self.scope.as_mut().unwrap();
         for tuple in v {
             if tuple.1 {
@@ -176,7 +180,10 @@ impl Rhai {
     }
 
     pub fn iter_script_vars(&self) -> impl Iterator<Item = (&str, bool, Dynamic)> {
-        RhaiIter(self.script_vars_range.0, self.scope.as_ref().unwrap().iter())
+        RhaiIter(
+            self.script_vars_range.1 - self.script_vars_range.0,
+            self.scope.as_ref().unwrap().iter().skip(self.script_vars_range.0 as usize),
+        )
     }
 
     pub fn iter_all_vars(&self) -> impl Iterator<Item = (&str, bool, Dynamic)> {
