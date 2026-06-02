@@ -228,6 +228,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let app = App::new();
     _ = stump_new(app, None);
     let rhai_raw = stump().rhai_manager.new_rhai("relic", RELIC);
+    let mut rhai = unsafe { &mut *rhai_raw };
+    let mut player = Player::new();
+    api_or_proxy(&mut rhai, &mut player);
+    rhai.eval_script();
     stump().rhai_manager.new_rhai("team", TEAM);
     stump().rhai_manager.init_done();
 
@@ -243,6 +247,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _unused = rhai_lock.toplevel_lock().await;
     let _: i64 = rhai.call("fight", ())?;
     dbg!(&player);
+    return Ok(());
 
     save_then_load().await?;
     stump_drop();

@@ -116,7 +116,8 @@ pub struct Rhai {
     pub engine: Engine,
     ast: AST,
     pub scope: Option<Scope<'static>>,
-    script_var_cnt: u32,
+    system_vars_range: (u32, u32),
+    script_vars_range: (u32, u32),
     trait_list: HashMap<String, String>,
 }
 
@@ -125,15 +126,30 @@ impl Rhai {
         let mut engine = Engine::new();
         engine.set_max_call_levels(64);
         engine.set_max_expr_depths(64, 64);
-        let mut scope = Scope::new();
         let ast = engine.compile(script).unwrap();
-        engine.register_fn("declare_trait", Rhai::declare_trait);
-        let _: Dynamic = engine.eval_ast_with_scope(&mut scope, &ast).unwrap();
+        Self {
+            lock: Mutex::new(()),
+            engine,
+            ast,
+            scope: Some(Scope::new()),
+            system_vars_range: (0, 0),
+            script_vars_range: (0, 0),
+            trait_list: HashMap::new(),
+        }
+    }
+
+    pub fn eval_script(&mut self) {
+        let scope = self.scope.as_mut().unwrap();
+        let system_vars_end = scope.len() as u32;
+        self.system_vars_range = (0, system_vars_end);
+        self.engine.register_fn("declare_trait", Rhai::declare_trait);
+        let _: Dynamic = self.engine.eval_ast_with_scope(scope, &self.ast).unwrap();
         let mgr = &mut stump().rhai_manager;
         let trait_list = mgr.trait_list.take().unwrap();
         mgr.trait_list = Some(HashMap::new());
-        let script_var_cnt = scope.len() as u32;
-        Self { lock: Mutex::new(()), engine, ast, scope: Some(scope), script_var_cnt, trait_list }
+        self.trait_list = trait_list;
+        let script_vars_end = scope.len() as u32;
+        self.script_vars_range = (system_vars_end, script_vars_end);
     }
 
     /// toplevel_lock() is used by rust to launch a request to a script initiatively, or load/save
@@ -160,7 +176,7 @@ impl Rhai {
     }
 
     pub fn iter_script_vars(&self) -> impl Iterator<Item = (&str, bool, Dynamic)> {
-        RhaiIter(self.script_var_cnt, self.scope.as_ref().unwrap().iter())
+        RhaiIter(self.script_vars_range.0, self.scope.as_ref().unwrap().iter())
     }
 
     pub fn iter_all_vars(&self) -> impl Iterator<Item = (&str, bool, Dynamic)> {
