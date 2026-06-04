@@ -65,33 +65,17 @@ use tokio::sync::{Mutex, MutexGuard};
 use crate::stump::stump;
 // }])>
 
-// Rhai <([{
-struct RhaiIter<A>(u32, A);
-
-impl<'a, A: Iterator<Item = (&'a str, bool, Dynamic)>> Iterator for RhaiIter<A> {
-    type Item = (&'a str, bool, Dynamic);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.0 == 0 {
-            None
-        } else {
-            self.0 -= 1;
-            self.1.next()
-        }
-    }
-}
-
+// RhaiMgr <([{
 #[derive(Debug)]
 pub struct RhaiMgr {
     data: HashMap<String, Rhai>,
-    // TODO: remove Optino?
-    trait_list: Option<HashMap<String, String>>,
+    trait_list: HashMap<String, String>,
     init_stage: bool,
 }
 
 impl RhaiMgr {
     pub(crate) fn new() -> Self {
-        Self { data: HashMap::new(), trait_list: Some(HashMap::new()), init_stage: true }
+        Self { data: HashMap::new(), trait_list: HashMap::new(), init_stage: true }
     }
 
     pub fn init_done(&mut self) {
@@ -110,14 +94,30 @@ impl RhaiMgr {
         self.data.get_mut(title).unwrap() as *mut _
     }
 }
+// }])>
+
+// Rhai and RhaiIter <([{
+struct RhaiIter<A>(u32, A);
+
+impl<'a, A: Iterator<Item = (&'a str, bool, Dynamic)>> Iterator for RhaiIter<A> {
+    type Item = (&'a str, bool, Dynamic);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0 == 0 {
+            None
+        } else {
+            self.0 -= 1;
+            self.1.next()
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Rhai {
     lock: Mutex<()>,
     pub engine: Engine,
     ast: AST,
-    // TODO: remove Optino?
-    pub scope: Option<Scope<'static>>,
+    pub scope: Scope<'static>,
     system_vars_range: (u32, u32),
     script_vars_range: (u32, u32),
     trait_list: HashMap<String, String>,
@@ -133,7 +133,7 @@ impl Rhai {
             lock: Mutex::new(()),
             engine,
             ast,
-            scope: Some(Scope::new()),
+            scope: Scope::new(),
             system_vars_range: (0, 0),
             script_vars_range: (0, 0),
             trait_list: HashMap::new(),
@@ -141,15 +141,14 @@ impl Rhai {
     }
 
     pub fn eval_script(&mut self) {
-        let scope = self.scope.as_mut().unwrap();
+        let scope = &mut self.scope;
         let system_vars_end = scope.len() as u32;
         self.system_vars_range = (0, system_vars_end);
         self.engine.register_fn("declare_trait", Rhai::declare_trait);
         let _: Dynamic = self.engine.eval_ast_with_scope(scope, &self.ast).unwrap();
         let mgr = &mut stump().rhai_manager;
-        let trait_list = mgr.trait_list.take().unwrap();
-        mgr.trait_list = Some(HashMap::new());
-        self.trait_list = trait_list;
+        self.trait_list = mgr.trait_list.clone();
+        mgr.trait_list = HashMap::new();
         let script_vars_end = scope.len() as u32;
         self.script_vars_range = (system_vars_end, script_vars_end);
     }
@@ -161,15 +160,14 @@ impl Rhai {
     }
 
     fn declare_trait(obj: String, trait_name: String) {
-        stump().rhai_manager.trait_list.as_mut().unwrap().insert(trait_name, obj);
+        stump().rhai_manager.trait_list.insert(trait_name, obj);
     }
 
     pub fn load_init(&mut self) {
-        self.scope.take();
-        self.scope = Some(Scope::new());
+        self.scope = Scope::new();
     }
     pub fn load_script_vars(&mut self, v: Vec<(String, bool, Dynamic)>) {
-        let scope = self.scope.as_mut().unwrap();
+        let scope = &mut self.scope;
         for tuple in v {
             if tuple.1 {
                 scope.push_constant_dynamic(tuple.0, tuple.2);
@@ -182,12 +180,12 @@ impl Rhai {
     pub fn iter_script_vars(&self) -> impl Iterator<Item = (&str, bool, Dynamic)> {
         RhaiIter(
             self.script_vars_range.1 - self.script_vars_range.0,
-            self.scope.as_ref().unwrap().iter().skip(self.script_vars_range.0 as usize),
+            self.scope.iter().skip(self.script_vars_range.0 as usize),
         )
     }
 
     pub fn iter_all_vars(&self) -> impl Iterator<Item = (&str, bool, Dynamic)> {
-        self.scope.as_ref().unwrap().iter()
+        self.scope.iter()
     }
 
     pub fn search_impl_er(&self, trait_name: &str) -> Option<&String> {
@@ -200,7 +198,7 @@ impl Rhai {
         method: impl AsRef<str>,
         args: impl FuncArgs,
     ) -> Result<T, Box<EvalAltResult>> {
-        let scope = self.scope.as_mut().unwrap();
+        let scope = &mut self.scope;
         let scope2: &mut Scope<'static> = unsafe { &mut *(scope as *mut _) };
         let value = scope.get_value_mut::<Map>(obj.as_ref()).unwrap();
         let obj = scope2.get_mut(obj.as_ref()).unwrap();
@@ -214,7 +212,7 @@ impl Rhai {
         args: impl FuncArgs,
     ) -> Result<T, Box<EvalAltResult>> {
         let options = CallFnOptions::new().eval_ast(false).rewind_scope(true);
-        self.engine.call_fn_with_options(options, self.scope.as_mut().unwrap(), &self.ast, fn_name, args)
+        self.engine.call_fn_with_options(options, &mut self.scope, &self.ast, fn_name, args)
     }
 }
 // }])>

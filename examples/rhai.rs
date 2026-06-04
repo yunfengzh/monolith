@@ -20,7 +20,7 @@ const RELIC: &str = r#"
         count: 1,
 
         on_player_die: |evt, cnt| {
-            print(`rhai event handler: Player ${evt}, ${cnt}`);
+            print(`rhai method event handler: Player ${evt}, ${cnt}`);
             if this.count > 0 {
                 this.count -= 1;
                 // TODO: init all rust vars before evaluate the script!
@@ -35,8 +35,9 @@ const RELIC: &str = r#"
     print("script eval ${Status_Some}");
     declare_trait("relic", "Life");
 
+    // TODO: remove later func
     fn on_player_die(evt, cnt) {
-        print(`rhai call event handler: Player ${evt}, ${cnt}`);
+        print(`rhai func event handler: Player ${evt}, ${cnt}`);
         if relic.count > 0 {
             relic.count -= 1;
             player.set(3);
@@ -89,7 +90,7 @@ enum Status {
 }
 
 fn register_rust_enum(rhai: &mut Rhai) {
-    rhai.scope.as_mut().unwrap().push_constant("Status_Some", <Status as Into<u32>>::into(Status::Some));
+    rhai.scope.push_constant("Status_Some", <Status as Into<u32>>::into(Status::Some));
 }
 // }])>
 
@@ -120,7 +121,7 @@ impl PlayerProxy {
         let proxy: PlayerProxy = PlayerProxy(player as *mut _);
         rhai.engine.register_fn("adjust", PlayerProxy::adjust);
         rhai.engine.register_fn("set", PlayerProxy::set);
-        rhai.scope.as_mut().unwrap().push("player", proxy);
+        rhai.scope.push("player", proxy);
     }
 
     pub fn adjust(&mut self, mut value: i64) {
