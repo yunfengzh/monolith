@@ -68,30 +68,37 @@ use crate::stump::stump;
 // RhaiMgr <([{
 #[derive(Debug)]
 pub struct RhaiMgr {
-    data: HashMap<String, Rhai>,
+    data: Vec<(String, Rhai)>,
     trait_list: HashMap<String, String>,
     init_stage: bool,
 }
 
 impl RhaiMgr {
     pub(crate) fn new() -> Self {
-        Self { data: HashMap::new(), trait_list: HashMap::new(), init_stage: true }
+        Self { data: Vec::new(), trait_list: HashMap::new(), init_stage: true }
     }
 
+    /// TODO: rhai raw pointer can be saved anywhere.
     pub fn init_done(&mut self) {
         self.init_stage = false;
     }
 
-    pub fn new_rhai(&mut self, title: &str, script: &str) -> *mut Rhai {
+    /// TODO: why return &mut Rhai
+    pub fn new_rhai(&mut self, title: &str, script: &str) -> &mut Rhai {
         if !self.init_stage {
             panic!("init stage has passed!");
         }
-        self.data.insert(title.to_string(), Rhai::new(script));
-        self.data.get_mut(title).unwrap() as *mut _
+        self.data.push((title.to_string(), Rhai::new(script)));
+        &mut self.data.last_mut().unwrap().1
     }
 
+    /// TODO: why return *mut Rhai
     pub fn get_rhai(&mut self, title: &str) -> *mut Rhai {
-        self.data.get_mut(title).unwrap() as *mut _
+        &mut self.data.iter_mut().find(|i| i.0 == title).unwrap().1 as *mut _
+    }
+
+    pub fn iter_rhai(&self) -> impl Iterator<Item = &(String, Rhai)> {
+        self.data.iter()
     }
 }
 // }])>
@@ -153,6 +160,7 @@ impl Rhai {
         self.script_vars_range = (system_vars_end, script_vars_end);
     }
 
+    /// TODO: remove toplevel_lock()? how from rust to rhai?
     /// toplevel_lock() is used by rust to launch a request to a script initiatively, or load/save
     /// context.
     pub async fn toplevel_lock(&mut self) -> MutexGuard<'_, ()> {

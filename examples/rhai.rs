@@ -20,41 +20,37 @@ const RELIC: &str = r#"
         count: 1,
 
         on_player_die: |evt, cnt| {
-            print(`rhai method event handler: Player ${evt}, ${cnt}`);
+            // later line will be failed, "No writable property 'p' ...", so PlayerProxy inner field
+            // is safe!
+            // player.p = 0;
+            print(`>> relic event(${evt}, ${cnt})`);
             if this.count > 0 {
                 this.count -= 1;
-                // TODO: init all rust vars before evaluate the script!
-                player.set(3);
-                return #{state: 1, msg: "revive done"};
+                return #{new_life: 3, state: 1, msg: "revive done"};
             } else {
-                return #{state: 0, msg: "No more reserve"};
+                return #{new_life: 0, state: 0, msg: "No more reserve"};
             }
         }
-   };
+    };
 
     print("script eval ${Status_Some}");
     declare_trait("relic", "Life");
-
-    // TODO: remove later func
-    fn on_player_die(evt, cnt) {
-        print(`rhai func event handler: Player ${evt}, ${cnt}`);
-        if relic.count > 0 {
-            relic.count -= 1;
-            player.set(3);
-            return #{state: 1, msg: "revive done"};
-        } else {
-            return #{state: 0, msg: "No more reserve"};
-        }
-    }
-
-    fn fight() {
-        player.adjust(-15);
-        1
-    }
 "#;
 
 const TEAM: &str = r#"
     let team = [];
+    let team_handler = #{
+        count: 1,
+
+        on_player_die: |evt, cnt| {
+            print(`>> team event(${evt}, ${cnt})`);
+            return #{new_life: 0, state: 1, msg: "do nothing"};
+        }
+    };
+
+    print("team_handler");
+    player.show("player is team leader");
+    declare_trait("team_handler", "Life");
 
     fn new_member(weapon) {
         let nm = 3; // CallFnOptions::rewind_scope(false) will make the variable global.
@@ -76,6 +72,7 @@ struct Hurt {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Revive {
+    new_life: i64,
     state: i64,
     msg: String,
 }
@@ -105,43 +102,51 @@ impl Player {
     fn new() -> Self {
         Self { life: 10, consumers: Vec::new() }
     }
+
+    // TODO: document about recursive call.
+    fn adjust(&mut self, value: i64) {
+        self.life += value as i32;
+        if self.life <= 0 {
+            // Rule about Life trait:
+            // 1. Event observers are called one-by-one in the order of registration.
+            // 2. If an observer can rescue player, finished loop immediately.
+            for i in self.consumers.iter() {
+                let ret = i.on_player_die(Hurt { critical_attack: value, state: "need heal".to_string() }, 17);
+                println!("<< result from rhai: {:?}", ret);
+                if ret.new_life > 0 {
+                    self.life = ret.new_life as i32;
+                    println!("player is rescued");
+                    break;
+                }
+            }
+        }
+        if self.life <= 0 {
+            println!("player is died");
+        }
+    }
 }
 
 // Here we can make sure player raw pointer available. Alternative is 'PlayerProxy(Arc<..>);'
 // Don't  worry, untrusted script can't access PlayerProxy inner field because we don't expose
 // PlayerProxy::set/get methods.
 #[derive(Clone)]
-struct PlayerProxy(*mut Player);
+struct PlayerProxy {
+    p: *mut Player,
+}
 
 unsafe impl Send for PlayerProxy {}
 unsafe impl Sync for PlayerProxy {}
 
 impl PlayerProxy {
     fn proxy(rhai: &mut Rhai, player: &mut Player) {
-        let proxy: PlayerProxy = PlayerProxy(player as *mut _);
-        rhai.engine.register_fn("adjust", PlayerProxy::adjust);
-        rhai.engine.register_fn("set", PlayerProxy::set);
+        let proxy = PlayerProxy { p: player as *mut _ };
+        rhai.engine.register_fn("show", PlayerProxy::show);
         rhai.scope.push("player", proxy);
     }
 
-    pub fn adjust(&mut self, mut value: i64) {
-        let player: &mut Player = unsafe { &mut *self.0 };
-        // Always double-check input from an untrusted script.
-        value = value.clamp(-20, -1);
-        player.life += value as i32;
-        if player.life <= 0 {
-            for i in player.consumers.iter() {
-                let ret = i.on_player_die(Hurt { critical_attack: value, state: "need heal".to_string() }, 17);
-                println!("result from rhai: {:?}", ret);
-            }
-        }
-    }
-
-    pub fn set(&mut self, mut value: i64) {
-        // Always double-check input from an untrusted script.
-        value = value.clamp(1, 20);
-        let player: &mut Player = unsafe { &mut *self.0 };
-        player.life = value as i32;
+    // TODO: remove later functions.
+    fn show(&mut self, msg: &str) {
+        println!("PlayerProxy{0}-{msg}", self.p as usize);
     }
 }
 
@@ -156,30 +161,25 @@ fn api_or_proxy(rhai: &mut Rhai, player: &mut Player) {
 // Rust to rhai <([{
 #[trait_to_rhai]
 trait Life {
-    fn on_player_die(&self, evt: Hurt, cnt: i64) -> Revive;
-
-    fn on_player_up(&self, cnt: i64);
-    fn on_player_revive(&self) -> Hurt;
+    fn on_player_die(&self, evt: Hurt, unused: i64) -> Revive;
 }
 // }])>
 
 // load/save <([{
 async fn load(json: &String) {
-    let rhai_raw = stump().rhai_manager.get_rhai("team");
-    let rhai_lock = unsafe { &mut *rhai_raw };
-    let mut rhai = unsafe { &mut *rhai_raw };
+    let rhai = unsafe { &mut *stump().rhai_manager.get_rhai("team") };
+    let rhai_lock: &mut Rhai = unsafe { &mut *(rhai as *mut _) };
     rhai.load_init();
     let mut player = Player::new();
-    api_or_proxy(&mut rhai, &mut player);
+    api_or_proxy(rhai, &mut player);
     let v: Vec<(String, bool, Dynamic)> = serde_json::from_str(json.as_str()).unwrap();
     let _unused = rhai_lock.toplevel_lock().await;
     rhai.load_script_vars(v);
 }
 
 async fn save() -> Result<String, Box<dyn Error>> {
-    let rhai_raw = stump().rhai_manager.get_rhai("team");
-    let rhai_lock = unsafe { &mut *rhai_raw };
-    let rhai = unsafe { &mut *rhai_raw };
+    let rhai = unsafe { &mut *stump().rhai_manager.get_rhai("team") };
+    let rhai_lock: &mut Rhai = unsafe { &mut *(rhai as *mut _) };
     let mut json = "[".to_string();
     let _unused = rhai_lock.toplevel_lock().await;
     for i in rhai.iter_script_vars() {
@@ -224,8 +224,7 @@ async fn save_then_load() -> Result<(), Box<dyn Error>> {
 
 fn team_init() {
     println!("----team init-----------");
-    let rhai_raw = stump().rhai_manager.new_rhai("team", TEAM);
-    let mut rhai = unsafe { &mut *rhai_raw };
+    let mut rhai = stump().rhai_manager.new_rhai("team", TEAM);
     let mut player = Player::new();
     api_or_proxy(&mut rhai, &mut player);
     rhai.eval_script();
@@ -236,25 +235,27 @@ fn team_init() {
 async fn main() -> Result<(), Box<dyn Error>> {
     let app = App::new();
     _ = stump_new(app, None);
-    let rhai_raw = stump().rhai_manager.new_rhai("relic", RELIC);
-    let mut rhai = unsafe { &mut *rhai_raw };
+    let mut rhai = stump().rhai_manager.new_rhai("relic", RELIC);
     let mut player = Player::new();
     api_or_proxy(&mut rhai, &mut player);
     rhai.eval_script();
     team_init();
     stump().rhai_manager.init_done();
 
-    let rhai_lock = unsafe { &mut *rhai_raw };
-    let mut rhai = unsafe { &mut *rhai_raw };
-    let mut player = Player::new();
-    let x = rhai.search_impl_er("Life");
-    if x.is_some() {
-        player.consumers.push(LifeToRhai(rhai_raw));
+    // let mut player = Player::new();
+    // api_or_proxy(rhai, &mut player);
+    for (_, i) in stump().rhai_manager.iter_rhai() {
+        let x = i.search_impl_er("Life");
+        if x.is_some() {
+            player.consumers.push(LifeToRhai(i as *const _ as *mut _));
+        }
     }
-    api_or_proxy(&mut rhai, &mut player);
     dbg!(&player);
-    let _unused = rhai_lock.toplevel_lock().await;
-    let _: i64 = rhai.call("fight", ())?;
+    player.adjust(-15);
+    player.adjust(-15);
+    // let rhai_lock = unsafe { &mut *rhai_raw };
+    // let _unused = rhai_lock.toplevel_lock().await;
+    // let _: i64 = rhai.call("fight", ())?;
     dbg!(&player);
 
     save_then_load().await?;
