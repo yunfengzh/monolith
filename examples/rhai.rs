@@ -132,6 +132,7 @@ impl Player {
 #[derive(Clone)]
 struct PlayerProxy {
     p: *mut Player,
+    // more fields can be defined here.
 }
 
 unsafe impl Send for PlayerProxy {}

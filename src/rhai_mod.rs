@@ -133,7 +133,7 @@ pub struct Rhai {
 impl Rhai {
     fn new(script: &str) -> Self {
         let mut engine = Engine::new();
-        engine.set_max_call_levels(64);
+        engine.set_max_call_levels(16);
         engine.set_max_expr_depths(64, 64);
         let ast = engine.compile(script).unwrap();
         Self {
