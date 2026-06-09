@@ -160,6 +160,7 @@ impl Rhai {
         self.script_vars_range = (system_vars_end, script_vars_end);
     }
 
+    /// TODO: New git branch: remove all Struct::Option<Field> to Struct::Field.
     /// TODO: remove toplevel_lock()? how from rust to rhai?
     /// toplevel_lock() is used by rust to launch a request to a script initiatively, or load/save
     /// context.
