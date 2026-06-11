@@ -145,7 +145,6 @@ impl Foreend {
         unsafe { std::mem::transmute::<&'_ mut ButtonBackend, &'_ mut ButtonBackend>(ret) }
     }
 
-    // TODO: automatically free.
     pub fn create_user_backend(&self) -> UnboundedSender<GameEvent> {
         self.sender.clone()
     }

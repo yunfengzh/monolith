@@ -419,12 +419,14 @@ mod tests {
             let stump = stump();
             let guard = stump.sequential_mutex.lock().unwrap();
             let referee = Referee::new();
+            // a trick to renew our test object -- Referee.
             forget(replace(&mut stump.referee, referee));
             guard
         }
 
         pub fn mystump_drop(guard: MutexGuard<'static, ()>) {
             unsafe {
+                // a trick to renew our test object -- Referee.
                 drop_in_place(&mut stump().referee);
             }
             drop(guard);
@@ -509,7 +511,7 @@ mod tests {
             b.async_drop().await;
         });
 
-        // Athlete c, try to register then exit.
+        // Athlete c, try to register then exit (PauseStage).
         let mut mock_c = MockSaveSerialize::new();
         mock_c.expect_save().never();
         let task_c = tokio::spawn(async move {
@@ -523,7 +525,7 @@ mod tests {
             c.async_drop().await;
         });
 
-        // Athlete d, try to register then exit.
+        // Athlete d, try to register then exit (SavegameStage).
         let mut mock_d = MockSaveSerialize::new();
         mock_d.expect_save().never();
         let task_d = tokio::spawn(async move {

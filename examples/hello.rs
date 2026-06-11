@@ -166,7 +166,7 @@ struct MyGame {
     ui: UI,
     board: Board,
 
-    sprite: Option<Sprite>,
+    sprite: Sprite,
     migrate_state: Notify,
     round1: Option<Round1>,
     round2: Option<Round2>,
@@ -191,7 +191,7 @@ async fn new_mygame() {
                 astar: AStarServer::new(),
                 ui: UI::new().await,
                 board: Board::new(),
-                sprite: None,
+                sprite: Sprite::new(Vec3::new(1.0, 0.0, 0.0)),
                 migrate_state: Notify::new(),
                 round1: None,
                 round2: None,
@@ -223,9 +223,8 @@ async fn mygame_run() -> Result<(), Box<dyn Error>> {
         mygame().round1.as_mut().unwrap().run().await.unwrap();
     });
 
-    mg.sprite = Some(Sprite::new(Vec3::new(1.0, 0.0, 0.0)).await);
     stump.spawn(async move {
-        mygame().sprite.as_mut().unwrap().framework_run().await.unwrap();
+        mygame().sprite.framework_run().await.unwrap();
     });
 
     stump.get_ct().cancelled().await;
@@ -604,7 +603,7 @@ struct Sprite {
 }
 
 impl Sprite {
-    async fn new(pos: Vec3) -> Self {
+    fn new(pos: Vec3) -> Self {
         let pos = Transform::from_translation(pos).with_rotation(Quat::from_rotation_x(-PI / 5.));
         Self {
             pos,
@@ -847,7 +846,7 @@ impl LoadSerialize for Sprite {
 // Bevy: More customizations on Sprite::entity <([{
 fn bevy_sprite_picked(click: On<Pointer<Click>>) {
     let mg = mygame();
-    let sprite = mg.sprite.as_ref().unwrap();
+    let sprite = &mg.sprite;
     assert_eq!(click.event().entity, sprite.entity.unwrap());
     mg.astar.tx.send((sprite.foreend.as_ref().unwrap().get_id(), (Vec3::ZERO, Vec3::new(1.2, 2.3, 3.4)))).unwrap();
 }
@@ -1017,12 +1016,10 @@ impl Board {
                             mygame().round2.as_mut().unwrap().run().await.unwrap();
                         });
                     } else if name == type_name::<Sprite>() {
-                        let old = mg.sprite.take().unwrap();
-                        old.ready_for_drop().await;
-                        drop(old);
-                        mg.sprite = Some(from_slice::<Sprite>(&buf[data_start..data_end]).unwrap());
+                        mg.sprite.ready_for_drop().await;
+                        mg.sprite = from_slice::<Sprite>(&buf[data_start..data_end]).unwrap();
                         stump.spawn(async move {
-                            mygame().sprite.as_mut().unwrap().framework_run().await.unwrap();
+                            mygame().sprite.framework_run().await.unwrap();
                         });
                     }
                 }
