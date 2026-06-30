@@ -415,6 +415,7 @@ impl Round1 {
 
         println!("round1 start");
         ui_set_label("Round1".to_string());
+        // Safety: see Referee::register safety doc.
         let mut athlete = stump.referee.register(Box::new(unsafe { &*(&raw const *self) }), "round1".to_string()).await;
         let mut interval = interval(Duration::from_secs(15));
         interval.tick().await;
@@ -504,6 +505,7 @@ impl Round2 {
         let stump = stump();
         let cancellation_token = stump.get_ct();
 
+        // Safety: see Referee::register safety doc.
         let mut athlete = stump.referee.register(Box::new(unsafe { &*(&raw const *self) }), "round2".to_string()).await;
         println!("round2 start");
         ui_set_label("Round2".to_string());
@@ -624,8 +626,7 @@ impl Sprite {
         self.cancellation_token = Some(stump.get_ct());
         self.cmd_chan = Some(stump.clone_tchan());
 
-        // Safety: self is registered as SaveSerialize object into stump.referee, is removed in
-        // athlete.async_drop() in later line, so self is always available during stump.referee.
+        // Safety: see Referee::register safety doc.
         self.athlete =
             Some(stump.referee.register(Box::new(unsafe { &*(&raw const *self) }), "sprite".to_string()).await);
 

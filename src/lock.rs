@@ -184,6 +184,9 @@ impl Referee {
     }
 
     // Safety, methods listed here is protected by lock. <([{
+    /// Safety: You can pass a raw pointer to su parameter, if you can make sure its lifetime is
+    /// larger than our return value, Athlete.async_drop will remove the pointer. See
+    /// examples/hello.rs for more.
     pub async fn register(&mut self, su: Box<dyn SaveSerialize>, desc: String) -> Athlete {
         let lock = self.state.lock().await;
         let forced_pause_request = match *lock {
