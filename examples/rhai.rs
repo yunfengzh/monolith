@@ -35,6 +35,11 @@ const RELIC: &str = r#"
 
     print("script eval ${Status_Some}");
     declare_trait("relic", "Life");
+
+    fn fight() {
+        player.adjust(-15);
+        return 0;
+    }
 "#;
 
 const TEAM: &str = r#"
@@ -142,12 +147,18 @@ impl PlayerProxy {
     fn proxy(rhai: &mut Rhai, player: &mut Player) {
         let proxy = PlayerProxy { p: player as *mut _ };
         rhai.engine.register_fn("show", PlayerProxy::show);
+        rhai.engine.register_fn("adjust", PlayerProxy::adjust);
         rhai.scope.push("player", proxy);
     }
 
     // TODO: remove later functions.
     fn show(&mut self, msg: &str) {
         println!("PlayerProxy{0}-{msg}", self.p as usize);
+    }
+
+    fn adjust(self, val: i64) {
+        let player = unsafe { &mut *self.p };
+        player.adjust(val);
     }
 }
 
@@ -252,11 +263,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     dbg!(&player);
-    player.adjust(-15);
-    player.adjust(-15);
-    // let rhai_lock = unsafe { &mut *rhai_raw };
-    // let _unused = rhai_lock.toplevel_lock().await;
-    // let _: i64 = rhai.call("fight", ())?;
+    // player.adjust(-15);
+    // player.adjust(-15);
+    let rhai_raw = stump().rhai_manager.get_rhai("relic");
+    let rhai_lock = unsafe { &mut *rhai_raw };
+    let _unused = rhai_lock.toplevel_lock().await;
+    let _: i64 = rhai.call("fight", ())?;
     dbg!(&player);
 
     save_then_load().await?;
