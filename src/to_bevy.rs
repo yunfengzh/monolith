@@ -213,6 +213,7 @@ fn handle_sync_pbr(
         appearance: Option<Appearance>,
     }
     impl Command for WorldSyncProxy {
+        type Out = ();
         fn apply(self, world: &mut World) {
             let world_mut = &raw mut *world;
             if let Some(transform) = self.transform {

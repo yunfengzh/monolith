@@ -17,7 +17,7 @@ tokio-stream = "0.1"
 
 [dependencies]
 monolith_macro_utils = { version = "0.6", path = "monolith_macro_utils/" }
-bevy = { version = "0.18", features = ["serialize"] }
+bevy = { version = "0.19", features = ["serialize"] }
 tokio = { version = "1.49", features = ["full"] }
 tokio-util = { version = "0.7", features = ["full"] }
 tokio-condvar = "0.3"

@@ -181,7 +181,7 @@ async fn new_mygame() {
     });
 
     bevy_new!(cmd_chan <- NewPointLight {
-        point_light: PointLight { shadows_enabled: true, intensity: 10_000_000., range: 100.0, ..default() },
+        point_light: PointLight { shadow_maps_enabled: true, intensity: 10_000_000., range: 100.0, ..default() },
         transform: Transform::from_xyz(8.0, 16.0, 8.0),
     });
 
@@ -273,7 +273,7 @@ fn create_button(parent: &mut RelatedSpawnerCommands<ChildOf>, title: &str) -> E
             ),
             children![(
                 Text::new(title),
-                TextFont { font_size: 35.0, ..default() },
+                TextFont::from_font_size(35.0),
                 TextColor(Color::srgb(0.9, 0.9, 0.9)),
                 TextShadow::default(),
             )],
@@ -310,7 +310,7 @@ fn bevy_setup_ui(In(ptr): In<usize>, mut commands: Commands) {
 
                     parent.spawn((
                         Text::new("Label Example"),
-                        TextFont { font_size: 60.0, ..default() },
+                        TextFont::from_font_size(60.0),
                         BackgroundColor(Color::from(GREEN)),
                         Label,
                     ));
