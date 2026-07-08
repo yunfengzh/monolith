@@ -43,6 +43,7 @@ const RELIC: &str = r#"
 "#;
 
 const TEAM: &str = r#"
+    // Put all definition at the head of the script, rhai doesn't walk through the whole script to find them.
     let team = [];
     let team_handler = #{
         count: 1,
@@ -108,7 +109,6 @@ impl Player {
         Self { life: 10, consumers: Vec::new() }
     }
 
-    // TODO: document about recursive call.
     fn adjust(&mut self, value: i64) {
         self.life += value as i32;
         if self.life <= 0 {
@@ -151,7 +151,6 @@ impl PlayerProxy {
         rhai.scope.push("player", proxy);
     }
 
-    // TODO: remove later functions.
     fn show(&mut self, msg: &str) {
         println!("PlayerProxy{0}-{msg}", self.p as usize);
     }
@@ -179,21 +178,19 @@ trait Life {
 
 // load/save <([{
 async fn load(json: &String) {
-    let rhai = unsafe { &mut *stump().rhai_manager.get_rhai("team") };
-    let rhai_lock: &mut Rhai = unsafe { &mut *(rhai as *mut _) };
+    let rhai = stump().rhai_manager.get_rhai("team");
     rhai.load_init();
     let mut player = Player::new();
     api_or_proxy(rhai, &mut player);
     let v: Vec<(String, bool, Dynamic)> = serde_json::from_str(json.as_str()).unwrap();
-    let _unused = rhai_lock.toplevel_lock().await;
+    let _unused = stump().rhai_manager.toplevel_lock().await;
     rhai.load_script_vars(v);
 }
 
 async fn save() -> Result<String, Box<dyn Error>> {
-    let rhai = unsafe { &mut *stump().rhai_manager.get_rhai("team") };
-    let rhai_lock: &mut Rhai = unsafe { &mut *(rhai as *mut _) };
+    let rhai = stump().rhai_manager.get_rhai("team");
     let mut json = "[".to_string();
-    let _unused = rhai_lock.toplevel_lock().await;
+    let _unused = stump().rhai_manager.toplevel_lock().await;
     for i in rhai.iter_script_vars() {
         json += &serde_json::to_string(&i)?;
         json += ",";
@@ -204,8 +201,7 @@ async fn save() -> Result<String, Box<dyn Error>> {
 }
 
 fn scope_to_json() -> String {
-    let rhai_raw = stump().rhai_manager.get_rhai("team");
-    let rhai = unsafe { &mut *rhai_raw };
+    let rhai = stump().rhai_manager.get_rhai("team");
     let mut json = "".to_string();
     for i in rhai.iter_all_vars() {
         json += &serde_json::to_string(&i).unwrap();
@@ -224,8 +220,7 @@ async fn compare() {
 
 async fn save_then_load() -> Result<(), Box<dyn Error>> {
     println!("---------------");
-    let rhai_raw = stump().rhai_manager.get_rhai("team");
-    let rhai = unsafe { &mut *rhai_raw };
+    let rhai = stump().rhai_manager.get_rhai("team");
     compare().await;
     let _: () = rhai.call("new_member", ("bow",))?;
     compare().await;
@@ -265,10 +260,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     dbg!(&player);
     // player.adjust(-15);
     // player.adjust(-15);
-    let rhai_raw = stump().rhai_manager.get_rhai("relic");
-    let rhai_lock = unsafe { &mut *rhai_raw };
-    let _unused = rhai_lock.toplevel_lock().await;
+    let guard = stump().rhai_manager.toplevel_lock().await;
     let _: i64 = rhai.call("fight", ())?;
+    drop(guard);
     dbg!(&player);
 
     save_then_load().await?;

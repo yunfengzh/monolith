@@ -223,8 +223,7 @@ pub fn trait_to_rhai(_attr: TokenStream, item: TokenStream) -> TokenStream {
     for item in &input_trait.items {
         if let TraitItem::Fn(method) = item {
             let method_name = &method.sig.ident;
-            // TODO: remove println?
-            println!("method: {}", method_name);
+            // println!("method: {}", method_name);
             let method_inputs = &method.sig.inputs;
             let method_output = &method.sig.output;
 
@@ -238,18 +237,19 @@ pub fn trait_to_rhai(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     FnArg::Receiver(_) => continue,
 
                     FnArg::Typed(PatType { pat, ty, .. }) => {
-                        let arg_name = quote!(#pat).to_string();
                         let param_name = match &**pat {
                             Pat::Ident(pat_ident) => &pat_ident.ident,
                             _ => continue,
                         };
 
-                        let type_str = quote!(#ty).to_string();
-
                         let is_struct = is_likely_struct(ty.as_ref());
-                        let struct_flag = if is_struct { "yes" } else { "no" };
 
-                        println!("  param: {:<15} type: {:<20} is struct: {}", arg_name, type_str, struct_flag);
+                        // println!(
+                        //     "  param: {:<15} type: {:<20} is struct: {}",
+                        //     quote!(#pat).to_string(),
+                        //     quote!(#ty).to_string(),
+                        //     if is_struct { "yes" } else { "no" }
+                        // );
                         if is_struct {
                             let line = quote! {
                                 let #param_name: Dynamic = rhai::serde::to_dynamic(#param_name).unwrap();
@@ -262,13 +262,11 @@ pub fn trait_to_rhai(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
 
-            // TODO: rhai.call("on_player_die", (m, cnt)).unwrap()
             let impl_code = quote! {
                 fn #method_name(#method_inputs) #method_output {
                     let rhai = unsafe { &mut *self.0 };
                     let rhai_call = unsafe { &mut *self.0 };
                     #(#params)*
-                    // TODO: use new rhai.call_method()
                     let obj = rhai.search_impl_er(stringify!(#trait_name)).unwrap();
                     // let ret: Dynamic = rhai.call(stringify!(#method_name), (#(#vcp)*)).unwrap();
                     let ret: Dynamic = rhai_call.call_method(obj, stringify!(#method_name), (#(#vcp)*)).unwrap();

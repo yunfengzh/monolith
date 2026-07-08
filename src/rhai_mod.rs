@@ -2,11 +2,16 @@
 
 // Module level Doc <([{
 //! A MOD architecture based on https://rhai.rs/. The module encapsulates rhai into [RhaiMgr] and
-//! [Rhai]. Later use rust to represent application side, rhai to represent rhai script. Rhai
-//! script is treated as untrusted script.
+//! [Rhai]. Later use rust to represent application side, rhai to represent rhai script. Note, Rhai
+//! script is treated as untrusted script, so it's your responsibility to double-check script input.
 //!
-//! ## Memory Model
+//! TODO: more doc
+//! ## Memory Model and Safety
 //!
+//! The module forces restarting game after new/delete and enable/disable a MOD. To benefit from it,
+//! [RhaiMgr::init_done] seperates the whole flow into two stages: during init stage, MODs are
+//! loaded into memory one-by-one, after init stage, since there's no new MOD at all, you can safely
+//! call [RhaiMgr::get_rhai] which return a static lifetime rhai reference.
 //! Application should follow later steps at init stage
 //!
 //! 1. [RhaiMgr::new_rhai] to get Rhai pointer.
@@ -71,19 +76,18 @@ pub struct RhaiMgr {
     data: Vec<(String, Rhai)>,
     trait_list: HashMap<String, String>,
     init_stage: bool,
+    lock: Mutex<()>,
 }
 
 impl RhaiMgr {
     pub(crate) fn new() -> Self {
-        Self { data: Vec::new(), trait_list: HashMap::new(), init_stage: true }
+        Self { data: Vec::new(), trait_list: HashMap::new(), init_stage: true, lock: Mutex::new(()) }
     }
 
-    /// TODO: rhai raw pointer can be saved anywhere.
     pub fn init_done(&mut self) {
         self.init_stage = false;
     }
 
-    /// TODO: why return &mut Rhai
     pub fn new_rhai(&mut self, title: &str, script: &str) -> &mut Rhai {
         if !self.init_stage {
             panic!("init stage has passed!");
@@ -92,13 +96,23 @@ impl RhaiMgr {
         &mut self.data.last_mut().unwrap().1
     }
 
-    /// TODO: why return *mut Rhai
-    pub fn get_rhai(&mut self, title: &str) -> *mut Rhai {
-        &mut self.data.iter_mut().find(|i| i.0 == title).unwrap().1 as *mut _
+    pub fn get_rhai(&mut self, title: &str) -> &'static mut Rhai {
+        if self.init_stage {
+            panic!("The function can't be called at init stage!");
+        }
+        let ret = &mut self.data.iter_mut().find(|i| i.0 == title).unwrap().1 as *mut _;
+        unsafe { &mut *ret }
     }
 
     pub fn iter_rhai(&self) -> impl Iterator<Item = &(String, Rhai)> {
+        if self.init_stage {
+            panic!("The function can't be called at init stage!");
+        }
         self.data.iter()
+    }
+
+    pub async fn toplevel_lock(&self) -> MutexGuard<'_, ()> {
+        self.lock.lock().await
     }
 }
 // }])>
@@ -121,7 +135,6 @@ impl<'a, A: Iterator<Item = (&'a str, bool, Dynamic)>> Iterator for RhaiIter<A> 
 
 #[derive(Debug)]
 pub struct Rhai {
-    lock: Mutex<()>,
     pub engine: Engine,
     ast: AST,
     pub scope: Scope<'static>,
@@ -137,7 +150,6 @@ impl Rhai {
         engine.set_max_expr_depths(64, 64);
         let ast = engine.compile(script).unwrap();
         Self {
-            lock: Mutex::new(()),
             engine,
             ast,
             scope: Scope::new(),
@@ -158,14 +170,6 @@ impl Rhai {
         mgr.trait_list = HashMap::new();
         let script_vars_end = scope.len() as u32;
         self.script_vars_range = (system_vars_end, script_vars_end);
-    }
-
-    /// TODO: New git branch: remove all Struct::Option<Field> to Struct::Field.
-    /// TODO: remove toplevel_lock()? how from rust to rhai?
-    /// toplevel_lock() is used by rust to launch a request to a script initiatively, or load/save
-    /// context.
-    pub async fn toplevel_lock(&mut self) -> MutexGuard<'_, ()> {
-        self.lock.lock().await
     }
 
     fn declare_trait(obj: String, trait_name: String) {
