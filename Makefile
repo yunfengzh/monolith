@@ -1,8 +1,11 @@
 # $env:RUST_BACKTRACE=1; cargo run --example stump
 default:
-	cargo run --example rhai
+	cargo run --example crossref
 	# CARGO_TARGET_DIR=${HOME}/tmp cargo run --example rhai
 	# cargo run --example hello
+
+debug:
+	rust-gdb target/debug/examples/crossref
 
 # $env:RUST_TEST_NOCAPTURE=1; cargo test --lib
 # cargo publish --workspace
