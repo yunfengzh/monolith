@@ -2,17 +2,20 @@
 
 // Module level Doc <([{
 //! A MOD architecture based on https://rhai.rs/. The module encapsulates rhai into [RhaiMgr] and
-//! [Rhai]. Later use rust to represent application side, rhai to represent rhai script. Note, Rhai
-//! script is treated as untrusted script, so it's your responsibility to double-check script input.
+//! [Rhai]. Later let us call rust to represent application side, rhai to represent rhai script.
+//! Note, Rhai script is treated as untrusted script, so it's up to developer to double-check script
+//! input.
 //!
-//! TODO: more doc
+//! Another thing need to be emphasized is the module depends on https://github.com/yunfengzh/rhai.
+//! Which I patch sth.
+//!
 //! ## Memory Model and Safety
 //!
-//! The module forces restarting game after new/delete and enable/disable a MOD. To benefit from it,
+//! The module forces restarting game after new/delete and enable/disable a MOD.
 //! [RhaiMgr::init_done] seperates the whole flow into two stages: during init stage, MODs are
 //! loaded into memory one-by-one, after init stage, since there's no new MOD at all, you can safely
-//! call [RhaiMgr::get_rhai] which return a static lifetime rhai reference.
-//! Application should follow later steps at init stage
+//! call [RhaiMgr::get_rhai] which return a static reference of the rhai script. Application should
+//! follow later steps at init stage
 //!
 //! 1. [RhaiMgr::new_rhai] to get Rhai pointer.
 //! 2. in script, calls [Rhai::declare_trait] to register supported traits.
@@ -28,7 +31,7 @@
 //! To achieve control from rust to rhai
 //!
 //! 1. rust need define some traits for rhai to implement, by these traits, rust can inject events
-//!    etc to rhai.
+//!    to rhai.
 //! 2. Script need call [Rhai::declare_trait] to declare which traits are supported in its global
 //!    statements. It is a system function only available when a Rhai instance is setup. It's
 //!    advised that global statements only include `declare_trait(...)` and script vars.
@@ -36,29 +39,28 @@
 //!
 //! To achieve control from rhai to rust
 //!
-//! 1. Typically, it's called API by [Engine::register_fn], but I recommend group them by
-//! obj by [Scope::push].
-//! 2. You can also define a proxy var to make rhai access rust inner var. Don't worry, if there
+//! - Typically, it's also called API. Use [Scope::push] and [Engine::register_fn].
+//! - You can also define a proxy var to make rhai access rust inner var. Don't worry, if there
 //!    isn't Proxy::set/get method, the inner field of proxy var can't be accessed by rhai script.
 //!
 //! These vars are called system vars.
 //!
 //! ## Share data between rust and rhai
 //!
-//! In fact, shared data is also the part of a protocol or API. That is, you need doc the struct of
-//! the data then the struct with `#derive[Serialize, Deserialize]`, rhai will do the remain
-//! translation.
+//! Here, share data is focused how a data can be r/w from/to rhai. Sign a rust struct with
+//! `#derive[Serialize, Deserialize]`, then in rhai, use map syntax to access them -- `#{new_life:
+//! 3, state: 1, msg: "revive done"};`, rhai will care for data translation.
 //!
 //! ## Load/Save Script
 //!
 //! 1. To save script vars, [Rhai::iter_script_vars].
-//! 2. To load script vars, [Rhai::load].
+//! 2. To load script vars, [Rhai::load_script_vars].
 //! 3. It's up to you to decide how to save system vars.
 //!
-//! ## [Rhai::toplevel_lock]
-//! When application calls rhai function/method initiatively or load/save, it must calls
-//! [Rhai::toplevel_lock] to prevent potential race on Rhai. [Rhai::lock] can't be placed into
-//! [Rhai::call] due to rhai maybe tries to call [Rhai::call] in API then lead to deadlock.
+//! ## [RhaiMgr::toplevel_lock]
+//! Every time you send a request to a rhai script or it is triggered by timer, you need
+//! [RhaiMgr::toplevel_lock]. The lock is powerfull, all rhai scripts are locked. Control flow after
+//! the lock is caller >> a script >> rust code (trigger event broadcast) >> b script >> etc.
 //!
 //! `example/rhai.rs` is the best way to start.
 

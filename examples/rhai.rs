@@ -11,9 +11,9 @@ use rhai::*;
 use yunfengzh_monolith::prelude::*;
 // }])>
 
-// TODO: new sample, a script send message to b script, by rust message-system (athlete).
-// Two scripts are provided, RELIC demostrates the basic usage of a script. TEAM shows how to
-// load/save a script.
+// Two scripts are provided:
+// 1. RELIC demostrates the basic usage of a script.
+// 2. TEAM shows how to load/save a script.
 // sample scripts <([{
 const RELIC: &str = r#"
     let relic = #{
@@ -43,8 +43,11 @@ const RELIC: &str = r#"
 "#;
 
 const TEAM: &str = r#"
-    // Put all definition at the head of the script, rhai doesn't walk through the whole script to find them.
     let team = [];
+
+    print("team_handler");
+    player.show("player is team leader");
+    declare_trait("team_handler", "Life");
     let team_handler = #{
         count: 1,
 
@@ -53,10 +56,6 @@ const TEAM: &str = r#"
             return #{new_life: 0, state: 1, msg: "do nothing"};
         }
     };
-
-    print("team_handler");
-    player.show("player is team leader");
-    declare_trait("team_handler", "Life");
 
     fn new_member(weapon) {
         let nm = 3; // CallFnOptions::rewind_scope(false) will make the variable global.
@@ -69,7 +68,7 @@ const TEAM: &str = r#"
 "#;
 // }])>
 
-// structs shared between rust and rhai, doc them to rhai developer <([{
+// structs shared between rust and rhai, doc them to MOD authror <([{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Hurt {
     critical_attack: i64,
@@ -84,7 +83,7 @@ struct Revive {
 }
 // }])>
 
-// import enum to rhai <([{
+// import enum to rhai, FAILED, TODO: <([{
 #[derive(Clone, TryFromPrimitive, IntoPrimitive)]
 #[repr(u32)]
 enum Status {
@@ -97,7 +96,7 @@ fn register_rust_enum(rhai: &mut Rhai) {
 }
 // }])>
 
-// Rhai to rust <([{
+// Rhai to rust, rust inner var Player and PlayerProxy <([{
 #[derive(Clone, Debug)]
 struct Player {
     pub life: i32,
@@ -131,7 +130,6 @@ impl Player {
     }
 }
 
-// Here we can make sure player raw pointer available. Alternative is 'PlayerProxy(Arc<..>);'
 // Don't  worry, untrusted script can't access PlayerProxy inner field because we don't expose
 // PlayerProxy::set/get methods.
 #[derive(Clone)]
@@ -161,15 +159,14 @@ impl PlayerProxy {
     }
 }
 
+// TODO: a sample for Server API.
 fn api_or_proxy(rhai: &mut Rhai, player: &mut Player) {
-    // Make rust object accessed by untrusted-script -- by proxy.
     PlayerProxy::proxy(rhai, player);
-    // TODO: More such as web.channel -- an rust object open a connection for game server.
     register_rust_enum(rhai);
 }
 // }])>
 
-// Rust to rhai <([{
+// Rust to rhai, proc macro trait_to_rhai <([{
 #[trait_to_rhai]
 trait Life {
     fn on_player_die(&self, evt: Hurt, unused: i64) -> Revive;
@@ -219,6 +216,7 @@ async fn compare() {
 }
 
 async fn save_then_load() -> Result<(), Box<dyn Error>> {
+    // TODO: team script has bug, script vars appear twice.
     println!("---------------");
     let rhai = stump().rhai_manager.get_rhai("team");
     compare().await;
@@ -240,6 +238,7 @@ fn team_init() {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    // TODO: redesign the two samples, currently, it's messy.
     let app = App::new();
     _ = stump_new(app, None);
     let mut rhai = stump().rhai_manager.new_rhai("relic", RELIC);
@@ -249,21 +248,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     team_init();
     stump().rhai_manager.init_done();
 
-    // let mut player = Player::new();
-    // api_or_proxy(rhai, &mut player);
+    // connect script subscripter to player.
     for (_, i) in stump().rhai_manager.iter_rhai() {
         let x = i.search_impl_er("Life");
         if x.is_some() {
             player.consumers.push(LifeToRhai(i as *const _ as *mut _));
         }
     }
-    dbg!(&player);
-    // player.adjust(-15);
-    // player.adjust(-15);
+    // dbg!(&player);
     let guard = stump().rhai_manager.toplevel_lock().await;
     let _: i64 = rhai.call("fight", ())?;
     drop(guard);
-    dbg!(&player);
 
     save_then_load().await?;
     stump_drop();
