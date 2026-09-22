@@ -216,7 +216,9 @@ async fn compare() {
 }
 
 async fn save_then_load() -> Result<(), Box<dyn Error>> {
-    // TODO: team script has bug, script vars appear twice.
+    // TODO: team script has bug, script vars appear twice, disable crossref!, if enable crossref,
+    // TODO: disable shadow? see rhai/Makefile for how to solve it.
+    // we need tree-walkthrough to detect cycle.
     println!("---------------");
     let rhai = stump().rhai_manager.get_rhai("team");
     compare().await;
